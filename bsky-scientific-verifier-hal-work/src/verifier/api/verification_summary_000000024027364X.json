@@ -1,0 +1,22 @@
+{
+  "orcid_id": "0000-0002-4027-364X",
+  "name": "Frances H. Arnold",
+  "verified_institution": null,
+  "orcid_num_publications": 354,
+  "orcid_years_active": {
+    "first_publication": 1982,
+    "last_publication": 2020
+  },
+  "orcid_publication_types_summary": {
+    "journal-article": 328,
+    "magazine-article": 2,
+    "book": 3,
+    "book-chapter": 21
+  },
+  "pubmed_match": true,
+  "pubmed_num_publications": 20,
+  "most_recent_pubmed_title": "Active learning-assisted directed evolution.",
+  "most_recent_pubmed_year": 2025,
+  "most_recent_pubmed_journal": "Nature communications",
+  "most_recent_pubmed_field": "Directed Molecular Evolution"
+}
