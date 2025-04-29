@@ -2,6 +2,8 @@ import requests
 import sys
 import json
 import xml.etree.ElementTree as ET
+import datetime
+import os
 
 '''
 orcid_lookup.py
@@ -137,12 +139,13 @@ def summarize_and_save(orcid_id, orcid_profile, pubmed_by_name, pubmed_by_orcid,
         "verified_institution": extract_verified_institution(orcid_id) if orcid_profile else None,
     }
 
-    # ORCID works summary
+    # ORCID Works Summary
     if orcid_works_data:
         years = orcid_works_data.get("publication_years", [])
         publication_types = orcid_works_data.get("publication_types", [])
+        num_publications = orcid_works_data.get("num_publications", 0)
         result.update({
-            "orcid_num_publications": orcid_works_data.get("num_publications", 0),
+            "orcid_num_publications": num_publications,
             "orcid_years_active": {
                 "first_publication": min(years),
                 "last_publication": max(years)
@@ -153,24 +156,25 @@ def summarize_and_save(orcid_id, orcid_profile, pubmed_by_name, pubmed_by_orcid,
             } if publication_types else {}
         })
     else:
+        num_publications = 0
         result.update({
             "orcid_num_publications": 0,
             "orcid_years_active": None,
             "orcid_publication_types_summary": {}
         })
 
-    # PubMed match status
+    # PubMed Match
     pubmed_match = False
     if (pubmed_by_orcid and int(pubmed_by_orcid.get("esearchresult", {}).get("count", 0)) > 0) or \
        (pubmed_by_name and int(pubmed_by_name.get("esearchresult", {}).get("count", 0)) > 0):
         pubmed_match = True
     result["pubmed_match"] = pubmed_match
 
-    # PubMed detailed metadata
+    # PubMed Metadata
+    most_recent_article = None
     if pubmed_metadata:
         result["pubmed_num_publications"] = len(pubmed_metadata)
 
-        # Find most recent publication
         most_recent_article = max(
             (a for a in pubmed_metadata if a.get("year") is not None),
             key=lambda a: a["year"],
@@ -200,14 +204,35 @@ def summarize_and_save(orcid_id, orcid_profile, pubmed_by_name, pubmed_by_orcid,
             "most_recent_pubmed_field": None
         })
 
-    # Save summarized data to file
-    output_filename = f"verification_summary_{orcid_id.replace('-', '')}.json"
+    # Researcher Tagging
+    # ----------------------
+    # Emerging Researcher: 1–9 publications
+    # Researcher: 10+ publications
+    # Active Researcher: recent publication in last 5 years (based on PubMed most recent year)
+
+    current_year = datetime.datetime.now().year  # <-- Dynamic current year!
+
+    result["emerging_researcher"] = (1 <= num_publications <= 9)
+    result["researcher"] = (num_publications >= 10)
+
+    if most_recent_article and most_recent_article.get("year"):
+        result["active_researcher"] = (most_recent_article["year"] >= (current_year - 5))
+    else:
+        result["active_researcher"] = False
+
+    # Inside summarize_and_save:
+    output_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'data')
+    os.makedirs(output_dir, exist_ok=True)  # make sure /data exists
+
+    output_filename = os.path.join(output_dir, f"verification_summary_{orcid_id.replace('-', '')}.json")
+
     with open(output_filename, "w") as f:
         json.dump(result, f, indent=2)
 
     print("\n=== Verification Summary ===")
     print(json.dumps(result, indent=2))
     print(f"\nSaved to {output_filename}")
+
 
 # Main program execution
 if __name__ == "__main__":
