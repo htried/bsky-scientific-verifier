@@ -1,0 +1,9 @@
+{
+  "name": "bsky-scientific-verifier-scripts",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@atproto/jwk-jose": "^0.1.6",
+    "dotenv": "^16.4.5"
+  }
+} 

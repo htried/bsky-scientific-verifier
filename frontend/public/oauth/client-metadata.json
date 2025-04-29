@@ -1,0 +1,16 @@
+{
+  "client_id": "https://bsky-scientific-verifier.vercel.app/oauth/client-metadata.json",
+  "client_name": "Bluesky Scientific Verifier",
+  "client_uri": "https://bsky-scientific-verifier.vercel.app",
+  "application_type": "web",
+  "grant_types": ["authorization_code", "refresh_token"],
+  "redirect_uris": ["https://bsky-scientific-verifier.vercel.app/api/atproto/callback"],
+  "response_types": ["code"],
+  "scope": "atproto",
+  "token_endpoint_auth_method": "private_key_jwt",
+  "token_endpoint_auth_signing_alg": "ES256",
+  "jwks_uri": "https://bsky-scientific-verifier.vercel.app/oauth/jwks.json",
+  "dpop_bound_access_tokens": true,
+  "dpop_signing_alg_values_supported": ["ES256"],
+  "dpop_nonce_required": false
+} 

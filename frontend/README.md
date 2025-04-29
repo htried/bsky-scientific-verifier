@@ -12,10 +12,10 @@ npm install
 2. Create a `.env.local` file in the root directory with the following variables:
 ```env
 # API Configuration
-API_BASE_URL=http://localhost:8000
+API_BASE_URL=http://127.0.0.1:8000
 
 # Frontend Configuration
-NEXT_PUBLIC_FRONTEND_URL=http://localhost:3000
+NEXT_PUBLIC_FRONTEND_URL=http://127.0.0.1:3000
 ```
 
 3. Start the development server:
@@ -23,7 +23,7 @@ NEXT_PUBLIC_FRONTEND_URL=http://localhost:3000
 npm run dev
 ```
 
-The application will be available at http://localhost:3000.
+The application will be available at http://127.0.0.1:3000.
 
 ## Features
 

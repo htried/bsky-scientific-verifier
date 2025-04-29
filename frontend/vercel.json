@@ -1,0 +1,35 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "package.json",
+      "use": "@vercel/next"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/(.*)",
+      "dest": "/api/$1"
+    },
+    {
+      "src": "/oauth/(.*)",
+      "dest": "/oauth/$1"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/$1"
+    }
+  ],
+  "env": {
+    "NEXT_PUBLIC_API_URL": "https://zpgkzlqawc.execute-api.us-east-1.amazonaws.com/prod",
+    "NEXT_PUBLIC_APP_URL": "https://bsky-scientific-verifier.vercel.app",
+    "NEXT_PUBLIC_ATP_CLIENT_ID": "https://bsky-scientific-verifier.vercel.app/oauth/client-metadata.json",
+    "NEXT_PUBLIC_ATP_REDIRECT_URI": "https://bsky-scientific-verifier.vercel.app/api/atproto/callback",
+    "NEXT_PUBLIC_ATP_HANDLE_RESOLVER": "https://bsky.social",
+    "API_URL": "https://zpgkzlqawc.execute-api.us-east-1.amazonaws.com/prod",
+    "OAUTH_LAMBDA_URL": "https://zpgkzlqawc.execute-api.us-east-1.amazonaws.com/prod/oauth/callback",
+    "AWS_ACCESS_KEY_ID": "aws_access_key_id",
+    "AWS_SECRET_ACCESS_KEY": "aws_secret_access_key",
+    "AWS_REGION": "us-east-1"
+  }
+} 
