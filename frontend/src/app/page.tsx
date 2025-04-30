@@ -3,135 +3,146 @@
 import { useState, useEffect } from 'react';
 import { initiateBlueskyAuth } from '@/lib/bluesky-auth';
 
+interface OrcidData {
+  id: string;
+  name: string;
+  institutions: string[];
+  numPublications: number;
+}
+
 export default function Home() {
-  const [orcidData, setOrcidData] = useState<{ id: string; name: string } | null>(null);
-  const [blueskyData, setBlueskyData] = useState<{ handle: string; did: string } | null>(null);
+  const [orcidData, setOrcidData] = useState<OrcidData | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [blueskyHandle, setBlueskyHandle] = useState<string>('');
+
+  // Check for URL parameters on initial load
+  useEffect(() => {
+    const searchParams = new URLSearchParams(window.location.search);
+    
+    // Check for ORCID data
+    const orcidId = searchParams.get('orcidId');
+    if (orcidId) {
+      const institutionsParam = searchParams.get('institutions');
+      const institutions = institutionsParam ? JSON.parse(institutionsParam) : [];
+      
+      setOrcidData({
+        id: orcidId,
+        name: searchParams.get('name') || '',
+        institutions: Array.isArray(institutions) ? institutions : [],
+        numPublications: parseInt(searchParams.get('numPublications') || '0')
+      });
+    }
+
+    // Check for error
+    const errorMessage = searchParams.get('error');
+    if (errorMessage) {
+      setError(errorMessage);
+    }
+  }, []);
 
   const handleOrcidAuth = async () => {
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL;
       if (!apiUrl) throw new Error('API URL not configured');
       
-      const response = await fetch(`${apiUrl}/oauth/authorize?provider=orcid`);
-      if (!response.ok) throw new Error('Failed to initiate ORCID authentication');
-      
-      if (response.status === 302) {
-        const authUrl = response.headers.get('Location');
-        if (!authUrl) throw new Error('No authorization URL in response');
-        window.location.href = authUrl;
-      } else {
-        throw new Error('Unexpected response from server');
+      // Use our API Gateway endpoint
+      const response = await fetch(`${apiUrl}/oauth/authorize?provider=orcid`, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to initiate ORCID authentication');
       }
+
+      // Get the authorization URL from the response
+      const data = await response.json();
+      if (!data.authUrl) {
+        throw new Error('No authorization URL in response');
+      }
+
+      // Redirect to the authorization URL
+      window.location.href = data.authUrl;
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Failed to start ORCID authentication');
     }
   };
 
-  const handleBlueskyAuth = async () => {
-    try {
-      if (!blueskyHandle) {
-        setError('Please enter your Bluesky handle');
-        return;
-      }
-      const authUrl = await initiateBlueskyAuth(blueskyHandle);
-      window.location.href = authUrl;
-    } catch (error) {
-      setError(error instanceof Error ? error.message : 'Failed to start Bluesky authentication');
-    }
-  };
-
-  // Check for OAuth callback data
-  useEffect(() => {
-    const searchParams = new URLSearchParams(window.location.search);
-    const code = searchParams.get('code');
-    const state = searchParams.get('state');
-    const iss = searchParams.get('iss');
-
-    if (code && state) {
-      const handleCallback = async () => {
-        try {
-          const response = await fetch('/api/oauth/callback?' + searchParams.toString());
-          if (!response.ok) throw new Error('Failed to handle OAuth callback');
-          
-          const data = await response.json();
-          if (iss === 'https://orcid.org') {
-            setOrcidData({ id: data.orcid_id, name: data.profile?.person?.name?.['given-names']?.value || 'Unknown' });
-          } else if (iss === 'https://bsky.social') {
-            setBlueskyData({ handle: data.handle, did: data.did });
-          }
-        } catch (error) {
-          setError(error instanceof Error ? error.message : 'Failed to complete authentication');
-        }
-      };
-
-      handleCallback();
-    }
-  }, []);
-
   return (
-    <main className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4">
-      <div className="w-full max-w-4xl">
-        <h1 className="text-3xl font-bold text-center mb-8">Atproto Scientific Verifier</h1>
+    <main className="min-h-screen bg-gray-900 container-padding py-12">
+      <div className="content-container">
+        <h1 className="text-4xl font-bold mb-12 text-center text-white">
+          Atproto Scientific Verifier
+        </h1>
+        
+        <div className="card mb-8">
+          <h2 className="text-2xl font-semibold mb-6 text-white text-center">About This Tool</h2>
+          <p className="text-gray-300 mb-6 leading-relaxed text-center">
+            This tool helps verify your scientific credentials on Bluesky. The process involves two main steps:
+          </p>
+          <ol className="space-y-4 text-gray-300">
+            <li className="card-section">
+              <span className="font-medium text-blue-400">ORCID Verification:</span>
+              <span className="ml-2">Connect your ORCID account to verify your academic identity, publications, and affiliations.</span>
+            </li>
+            <li className="card-section">
+              <span className="font-medium text-blue-400">Bluesky Connection:</span>
+              <span className="ml-2">Link your verified academic identity to your Bluesky account.</span>
+            </li>
+          </ol>
+          <p className="text-gray-300 mt-6 leading-relaxed text-center">
+            Once verified, your Bluesky profile will be marked as belonging to a verified academic, 
+            helping others identify credible scientific voices on the platform.
+          </p>
+        </div>
         
         {error && (
-          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
+          <div className="mb-8 p-6 bg-red-900/50 border border-red-700 rounded-xl text-red-300 text-center">
             {error}
           </div>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-          {/* ORCID Column */}
-          <div className="bg-white p-6 rounded-lg shadow">
-            <h2 className="text-xl font-semibold mb-4">ORCID</h2>
+        <div className="card">
+          <h2 className="text-2xl font-semibold mb-6 text-white text-center">Step 1: Connect ORCID</h2>
+          <p className="text-gray-300 mb-8 leading-relaxed text-center">
+            Start by connecting your ORCID account. This will verify your academic identity, 
+            including your publications and institutional affiliations.
+          </p>
+          
             {orcidData ? (
-              <div className="space-y-2">
-                <p className="text-gray-600">ID: {orcidData.id}</p>
-                <p className="text-gray-600">Name: {orcidData.name}</p>
+            <div className="space-y-6">
+              <div className="card-section">
+                <p className="text-gray-300">ID: <span className="text-blue-400 font-mono">{orcidData.id}</span></p>
+                <p className="text-gray-300">Name: <span className="text-blue-400">{orcidData.name}</span></p>
+              </div>
+              
+              {orcidData.institutions.length > 0 && (
+                <div className="card-section">
+                  <h3 className="font-medium text-gray-200 mb-3">Institutions:</h3>
+                  <p className="text-gray-300">
+                    {Array.isArray(orcidData.institutions) 
+                      ? orcidData.institutions.join(', ')
+                      : orcidData.institutions}
+                  </p>
+                </div>
+              )}
+              
+              <div className="card-section">
+                <p className="text-gray-300">Publications: <span className="text-blue-400">{orcidData.numPublications}</span></p>
+              </div>
+              
+              <p className="text-gray-300 text-center mt-6">
+                ✓ ORCID verification complete. Proceed to connect your Bluesky account.
+              </p>
               </div>
             ) : (
-              <button
-                onClick={handleOrcidAuth}
-                className="w-full px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 transition-colors"
-              >
-                Connect ORCID
+            <button onClick={handleOrcidAuth} className="btn-primary">
+              Connect ORCID
               </button>
             )}
-          </div>
-
-          {/* Bluesky Column */}
-          <div className="bg-white p-6 rounded-lg shadow">
-            <h2 className="text-xl font-semibold mb-4">Bluesky</h2>
-            {blueskyData ? (
-              <div className="space-y-2">
-                <p className="text-gray-600">Handle: {blueskyData.handle}</p>
-                <p className="text-gray-600">DID: {blueskyData.did}</p>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                <div>
-                  <label htmlFor="bluesky-handle" className="block text-sm font-medium text-gray-700 mb-1">
-                    Bluesky Handle
-                  </label>
-                  <input
-                    type="text"
-                    id="bluesky-handle"
-                    value={blueskyHandle}
-                    onChange={(e) => setBlueskyHandle(e.target.value)}
-                    placeholder="e.g. hal.bsky.social"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <button
-                  onClick={handleBlueskyAuth}
-                  className="w-full px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
-                >
-                  Connect Bluesky
-                </button>
-              </div>
-            )}
-          </div>
         </div>
       </div>
     </main>

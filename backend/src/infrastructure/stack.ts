@@ -17,12 +17,33 @@ export class BackendStack extends cdk.Stack {
     // Create DynamoDB tables
     const stateTable = new dynamodb.Table(this, 'OAuthStateTable', {
       partitionKey: { name: 'key', type: dynamodb.AttributeType.STRING },
+      timeToLiveAttribute: 'ttl',
       removalPolicy: cdk.RemovalPolicy.DESTROY
+    });
+
+    // Add GSI for timestamp-based queries
+    stateTable.addGlobalSecondaryIndex({
+      indexName: 'TimestampIndex',
+      partitionKey: { name: 'timestamp', type: dynamodb.AttributeType.NUMBER },
+      sortKey: { name: 'key', type: dynamodb.AttributeType.STRING },
+      projectionType: dynamodb.ProjectionType.ALL
     });
 
     const sessionTable = new dynamodb.Table(this, 'OAuthSessionTable', {
       partitionKey: { name: 'key', type: dynamodb.AttributeType.STRING },
       removalPolicy: cdk.RemovalPolicy.DESTROY
+    });
+
+    const verificationTable = new dynamodb.Table(this, 'VerificationTable', {
+      partitionKey: { name: 'orcidId', type: dynamodb.AttributeType.STRING },
+      removalPolicy: cdk.RemovalPolicy.DESTROY
+    });
+
+    // Add GSI for blueskyHandle
+    verificationTable.addGlobalSecondaryIndex({
+      indexName: 'BlueskyHandleIndex',
+      partitionKey: { name: 'blueskyHandle', type: dynamodb.AttributeType.STRING },
+      projectionType: dynamodb.ProjectionType.ALL
     });
 
     // Create Lambda function
@@ -88,13 +109,15 @@ export class BackendStack extends cdk.Stack {
         OAUTH_USERINFO_URL: process.env.OAUTH_USERINFO_URL || 'https://orcid.org/oauth/userinfo',
         ATP_HANDLE_RESOLVER: process.env.ATP_HANDLE_RESOLVER || 'https://bsky.social',
         ATP_PROVIDER: 'atproto',
-        ORCID_PROVIDER: 'orcid'
+        ORCID_PROVIDER: 'orcid',
+        VERIFICATION_TABLE: verificationTable.tableName
       }
     });
 
     // Grant permissions
     stateTable.grantReadWriteData(oauthHandler);
     sessionTable.grantReadWriteData(oauthHandler);
+    verificationTable.grantReadWriteData(oauthHandler);
 
     // Create API Gateway
     const api = new apigateway.RestApi(this, 'OAuthApi', {
@@ -114,18 +137,42 @@ export class BackendStack extends cdk.Stack {
     // Add Lambda integration with proper request/response mapping
     const integration = new apigateway.LambdaIntegration(oauthHandler, {
       proxy: true,
-      requestTemplates: {
-        'application/json': '{ "statusCode": "200" }',
-        'application/x-www-form-urlencoded': '{ "statusCode": "200" }'
-      },
-      passthroughBehavior: apigateway.PassthroughBehavior.WHEN_NO_TEMPLATES,
       integrationResponses: [
         {
           statusCode: '200',
           responseParameters: {
             'method.response.header.Access-Control-Allow-Origin': "'*'",
             'method.response.header.Access-Control-Allow-Headers': "'*'",
-            'method.response.header.Access-Control-Allow-Methods': "'*'"
+            'method.response.header.Access-Control-Allow-Methods': "'*'",
+            'method.response.header.Access-Control-Allow-Credentials': "'true'"
+          }
+        },
+        {
+          statusCode: '302',
+          responseParameters: {
+            'method.response.header.Access-Control-Allow-Origin': "'*'",
+            'method.response.header.Access-Control-Allow-Headers': "'*'",
+            'method.response.header.Access-Control-Allow-Methods': "'*'",
+            'method.response.header.Access-Control-Allow-Credentials': "'true'",
+            'method.response.header.Location': 'integration.response.header.Location'
+          }
+        },
+        {
+          statusCode: '400',
+          responseParameters: {
+            'method.response.header.Access-Control-Allow-Origin': "'*'",
+            'method.response.header.Access-Control-Allow-Headers': "'*'",
+            'method.response.header.Access-Control-Allow-Methods': "'*'",
+            'method.response.header.Access-Control-Allow-Credentials': "'true'"
+          }
+        },
+        {
+          statusCode: '500',
+          responseParameters: {
+            'method.response.header.Access-Control-Allow-Origin': "'*'",
+            'method.response.header.Access-Control-Allow-Headers': "'*'",
+            'method.response.header.Access-Control-Allow-Methods': "'*'",
+            'method.response.header.Access-Control-Allow-Credentials': "'true'"
           }
         }
       ]
@@ -136,14 +183,43 @@ export class BackendStack extends cdk.Stack {
     const authorize = oauth.addResource('authorize');
     const callback = oauth.addResource('callback');
     
-    const methodOptions = {
+    const methodOptions: apigateway.MethodOptions = {
       methodResponses: [
         {
           statusCode: '200',
           responseParameters: {
             'method.response.header.Access-Control-Allow-Origin': true,
             'method.response.header.Access-Control-Allow-Headers': true,
-            'method.response.header.Access-Control-Allow-Methods': true
+            'method.response.header.Access-Control-Allow-Methods': true,
+            'method.response.header.Access-Control-Allow-Credentials': true
+          }
+        },
+        {
+          statusCode: '302',
+          responseParameters: {
+            'method.response.header.Access-Control-Allow-Origin': true,
+            'method.response.header.Access-Control-Allow-Headers': true,
+            'method.response.header.Access-Control-Allow-Methods': true,
+            'method.response.header.Access-Control-Allow-Credentials': true,
+            'method.response.header.Location': true
+          }
+        },
+        {
+          statusCode: '400',
+          responseParameters: {
+            'method.response.header.Access-Control-Allow-Origin': true,
+            'method.response.header.Access-Control-Allow-Headers': true,
+            'method.response.header.Access-Control-Allow-Methods': true,
+            'method.response.header.Access-Control-Allow-Credentials': true
+          }
+        },
+        {
+          statusCode: '500',
+          responseParameters: {
+            'method.response.header.Access-Control-Allow-Origin': true,
+            'method.response.header.Access-Control-Allow-Headers': true,
+            'method.response.header.Access-Control-Allow-Methods': true,
+            'method.response.header.Access-Control-Allow-Credentials': true
           }
         }
       ],
@@ -163,5 +239,31 @@ export class BackendStack extends cdk.Stack {
     const initiate = api.root.addResource('initiate');
     initiate.addMethod('GET', integration, methodOptions);
     initiate.addMethod('POST', integration, methodOptions);
+
+    // Add /labels endpoint
+    const labels = api.root.addResource('labels');
+    labels.addMethod('POST', integration, {
+      ...methodOptions,
+      authorizationType: apigateway.AuthorizationType.NONE
+    });
+
+    // Create API key
+    const apiKey = new apigateway.ApiKey(this, 'ApiKey', {
+      description: 'API key for label operations'
+    });
+
+    // Create usage plan
+    const usagePlan = new apigateway.UsagePlan(this, 'UsagePlan', {
+      name: 'LabelOperationsUsagePlan',
+      apiStages: [
+        {
+          api: api,
+          stage: api.deploymentStage
+        }
+      ]
+    });
+
+    // Associate API key with usage plan
+    usagePlan.addApiKey(apiKey);
   }
 } 

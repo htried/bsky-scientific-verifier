@@ -17,7 +17,10 @@
     "@aws-sdk/client-secrets-manager": "^3.0.0",
     "@aws-sdk/lib-dynamodb": "^3.0.0",
     "axios": "^1.6.0",
-    "source-map-support": "^0.5.21"
+    "source-map-support": "^0.5.21",
+    "@skyware/bot": "^0.3.7",
+    "@skyware/jetstream": "^0.2.0",
+    "@skyware/labeler": "^0.1.13"
   },
   "devDependencies": {
     "@types/aws-lambda": "^8.10.0",

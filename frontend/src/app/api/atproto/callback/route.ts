@@ -2,78 +2,65 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export async function GET(request: NextRequest) {
     try {
-        const searchParams = request.nextUrl.searchParams;
+        const { searchParams } = new URL(request.url);
         const code = searchParams.get('code');
         const state = searchParams.get('state');
-        const provider = searchParams.get('provider') || 'atproto';
-        const iss = searchParams.get('iss') || 'https://bsky.social';
+        const error = searchParams.get('error');
 
-        console.log('Received callback with parameters:', {
-            code: code ? 'present' : 'missing',
-            state: state ? 'present' : 'missing',
-            provider,
-            iss: iss ? 'present' : 'missing'
-        });
+        if (error) {
+            return NextResponse.redirect(new URL(`/?error=${encodeURIComponent(error)}`, request.url));
+        }
 
         if (!code || !state) {
-            const missingParams = [];
-            if (!code) missingParams.push('code');
-            if (!state) missingParams.push('state');
-            
-            return NextResponse.json(
-                { error: `Missing required parameters: ${missingParams.join(', ')}` },
-                { status: 400 }
-            );
+            return NextResponse.redirect(new URL('/?error=Missing required parameters', request.url));
         }
 
-        if (iss !== 'https://bsky.social') {
-            return NextResponse.json(
-                { error: `Invalid issuer. Expected 'https://bsky.social', got '${iss}'` },
-                { status: 400 }
-            );
+        // Forward the callback to our backend
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+        if (!apiUrl) {
+            throw new Error('API URL not configured');
         }
 
-        // Forward the request to AWS API Gateway
-        const apiUrl = new URL('https://zpgkzlqawc.execute-api.us-east-1.amazonaws.com/prod/oauth/callback');
-        
-        // Add query parameters
-        apiUrl.searchParams.append('code', code);
-        apiUrl.searchParams.append('state', state);
-        apiUrl.searchParams.append('provider', provider);
-        apiUrl.searchParams.append('iss', iss);
-
-        const response = await fetch(apiUrl.toString(), {
-            method: 'POST',
+        const response = await fetch(`${apiUrl}/oauth/callback?code=${code}&state=${state}&provider=atproto&iss=https://bsky.social`, {
+            method: 'GET',
             headers: {
-                'host': 'zpgkzlqawc.execute-api.us-east-1.amazonaws.com',
-                'content-type': 'application/json',
-            },
-            body: JSON.stringify({
-                code,
-                state,
-                provider,
-                iss
-            })
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
+            }
         });
 
         if (!response.ok) {
-            const errorText = await response.text();
-            console.error('Lambda function error:', {
-                status: response.status,
-                statusText: response.statusText,
-                error: errorText
-            });
-            throw new Error(`Failed to handle Bluesky OAuth callback: ${errorText}`);
+            const errorData = await response.json();
+            return NextResponse.redirect(new URL(`/?error=${encodeURIComponent(errorData.error || 'Failed to handle Bluesky callback')}`, request.url));
         }
 
         const data = await response.json();
-        return NextResponse.json(data);
+        
+        // Get the ORCID data from the backend response
+        const orcidId = data.orcidId;
+        const name = data.name;
+        const institutions = data.institutions;
+        const numPublications = data.numPublications;
+        
+        if (!orcidId || !name || !institutions || !numPublications) {
+            console.error('Missing ORCID data in response:', data);
+            return NextResponse.redirect(new URL('/?error=Missing ORCID data in response', request.url));
+        }
+
+        // Redirect to the verified page with all the data
+        const redirectUrl = new URL('/verified', process.env.NEXT_PUBLIC_APP_URL);
+        redirectUrl.searchParams.set('orcidId', orcidId);
+        redirectUrl.searchParams.set('name', name);
+        redirectUrl.searchParams.set('institutions', JSON.stringify(institutions));
+        redirectUrl.searchParams.set('numPublications', numPublications.toString());
+        redirectUrl.searchParams.set('status', 'verified');
+        redirectUrl.searchParams.set('handle', data.handle);
+        redirectUrl.searchParams.set('did', data.did);
+
+        return NextResponse.redirect(redirectUrl);
     } catch (error) {
         console.error('Error handling Bluesky callback:', error);
-        return NextResponse.json(
-            { error: 'Failed to handle Bluesky callback' },
-            { status: 500 }
-        );
+        return NextResponse.redirect(new URL(`/?error=${encodeURIComponent(error instanceof Error ? error.message : 'Failed to handle Bluesky callback')}`, request.url));
     }
 }
 

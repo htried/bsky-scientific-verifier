@@ -2,112 +2,54 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export async function GET(request: NextRequest) {
   try {
-    const searchParams = request.nextUrl.searchParams;
+    const { searchParams } = new URL(request.url);
     const code = searchParams.get('code');
     const state = searchParams.get('state');
-    const provider = searchParams.get('provider') || 'orcid';
-    const iss = searchParams.get('iss') || 'https://orcid.org';
+    const error = searchParams.get('error');
 
-    console.log('Received ORCID callback with parameters:', {
-      code: code ? 'present' : 'missing',
-      state: state ? 'present' : 'missing',
-      provider,
-      iss: iss ? 'present' : 'missing'
-    });
+    if (error) {
+      return NextResponse.redirect(new URL(`/?error=${encodeURIComponent(error)}`, request.url));
+    }
 
     if (!code || !state) {
-      const missingParams = [];
-      if (!code) missingParams.push('code');
-      if (!state) missingParams.push('state');
-      
-      return NextResponse.json(
-        { error: `Missing required parameters: ${missingParams.join(', ')}` },
-        { status: 400 }
-      );
+      return NextResponse.redirect(new URL('/?error=Missing required parameters', request.url));
     }
 
-    if (iss !== 'https://orcid.org') {
-      return NextResponse.json(
-        { error: `Invalid issuer. Expected 'https://orcid.org', got '${iss}'` },
-        { status: 400 }
-      );
+    // Forward the callback to our backend
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+    if (!apiUrl) {
+      throw new Error('API URL not configured');
     }
 
-    // Forward the request to AWS API Gateway
-    const apiUrl = new URL('https://zpgkzlqawc.execute-api.us-east-1.amazonaws.com/prod/oauth/callback');
-    
-    // Add query parameters
-    apiUrl.searchParams.append('code', code);
-    apiUrl.searchParams.append('state', state);
-    apiUrl.searchParams.append('provider', provider);
-    apiUrl.searchParams.append('iss', iss);
-
-    const response = await fetch(apiUrl.toString(), {
-      method: 'POST',
+    const response = await fetch(`${apiUrl}/oauth/callback?code=${code}&state=${state}&provider=orcid`, {
+      method: 'GET',
       headers: {
-        'host': 'zpgkzlqawc.execute-api.us-east-1.amazonaws.com',
-        'content-type': 'application/json',
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
       }
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      console.error('Backend error:', {
-        status: response.status,
-        statusText: response.statusText,
-        error: errorText
-      });
-      throw new Error(`Failed to handle ORCID OAuth callback: ${errorText}`);
+      const errorData = await response.json();
+      return NextResponse.redirect(new URL(`/?error=${encodeURIComponent(errorData.error || 'Failed to handle ORCID callback')}`, request.url));
     }
 
-    const data = await response.json();
-    return NextResponse.json(data);
+    const orcidData = await response.json();
+    
+    // Ensure institutions is an array
+    const institutions = Array.isArray(orcidData.institutions) ? orcidData.institutions : [];
+    
+    // Redirect to the frontend with the ORCID data
+    const redirectUrl = new URL('/verify', process.env.NEXT_PUBLIC_APP_URL);
+    redirectUrl.searchParams.set('orcidId', orcidData.orcidId);
+    redirectUrl.searchParams.set('name', orcidData.name);
+    redirectUrl.searchParams.set('institutions', JSON.stringify(institutions));
+    redirectUrl.searchParams.set('numPublications', orcidData.numPublications.toString());
+    redirectUrl.searchParams.set('status', orcidData.status);
+
+    return NextResponse.redirect(redirectUrl);
   } catch (error) {
     console.error('Error handling ORCID callback:', error);
-    return NextResponse.json(
-      { error: 'Failed to handle ORCID callback' },
-      { status: 500 }
-    );
-  }
-}
-
-export async function POST(request: NextRequest) {
-  try {
-    const { code, state, verification_id } = await request.json();
-    const provider = 'orcid'; // Always set to orcid for this endpoint
-
-    if (!code || !state || !verification_id) {
-      return NextResponse.json(
-        { error: 'Code, state, and verification_id are required' },
-        { status: 400 }
-      );
-    }
-
-    // Call FastAPI backend for ORCID OAuth callback
-    const response = await fetch(`${process.env.API_URL}/callback`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ 
-        code, 
-        state, 
-        verification_id,
-        provider
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error('Failed to handle ORCID OAuth callback');
-    }
-
-    const data = await response.json();
-    return NextResponse.json(data);
-  } catch (error) {
-    console.error('Error handling ORCID callback:', error);
-    return NextResponse.json(
-      { error: 'Failed to handle ORCID callback' },
-      { status: 500 }
-    );
+    return NextResponse.redirect(new URL(`/?error=${encodeURIComponent(error instanceof Error ? error.message : 'Failed to handle ORCID callback')}`, request.url));
   }
 } 

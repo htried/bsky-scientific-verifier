@@ -1,10 +1,19 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, PutCommand, GetCommand, DeleteCommand, PutCommandInput } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, PutCommand, GetCommand, DeleteCommand, PutCommandInput, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
-// import axios from 'axios';
-import { NodeOAuthClient, Session, NodeSavedState, NodeSavedSession, OAuthSession } from '@atproto/oauth-client-node';
+import { NodeOAuthClient, NodeSavedState, NodeSavedSession, OAuthSession } from '@atproto/oauth-client-node';
 import { JoseKey } from '@atproto/jwk-jose';
+import {
+  getOrcidProfile,
+  extractNameFromProfile,
+  extractVerifiedInstitution,
+  fetchOrcidWorks,
+  searchPubmedByOrcid,
+  fetchPubmedMetadata,
+  storeVerificationData
+} from './orcid-utils';
+import { addLabels, removeLabels } from './labels';
 
 const client = new DynamoDBClient({});
 const docClient = DynamoDBDocumentClient.from(client, {
@@ -27,12 +36,12 @@ const ORCID_PROVIDER = process.env.ORCID_PROVIDER || 'orcid';
 let oauthClient: NodeOAuthClient;
 
 // Add this helper function at the top of the file
-const corsHeaders = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Credentials': true,
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization'
-};
+const getCorsHeaders = (origin: string | undefined) => ({
+  'Access-Control-Allow-Origin': origin || '*',
+  'Access-Control-Allow-Credentials': true,
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+});
 
 async function getJwksKeys(): Promise<string> {
   try {
@@ -65,7 +74,6 @@ async function initializeOAuthClient() {
       client_name: 'Bsky Scientific Verifier',
       client_uri: PUBLIC_URL,
       redirect_uris: [
-        // `${PUBLIC_URL}/api/orcid/callback`,
         `${PUBLIC_URL}/api/atproto/callback`
       ],
       grant_types: ['authorization_code', 'refresh_token'],
@@ -141,12 +149,11 @@ async function initializeOAuthClient() {
   });
 }
 
-// Extend OAuthSession type to include JWT properties
-interface ExtendedOAuthSession extends Omit<OAuthSession, 'did'> {
-  accessJwt?: string;
-  refreshJwt?: string;
-  handle?: string;
-  did: `did:web:${string}` | `did:plc:${string}`;
+interface ExtendedOAuthSession extends OAuthSession {
+  accessJwt: string;
+  refreshJwt: string;
+  handle: string;
+  service: string;
 }
 
 interface OrcidTokenResponse {
@@ -158,12 +165,69 @@ interface OrcidTokenResponse {
   orcid: string;
 }
 
+async function storeOrcidForHandle(handle: string, orcidId: string): Promise<void> {
+  const input: PutCommandInput = {
+    TableName: process.env.VERIFICATION_TABLE,
+    Item: {
+      handle,
+      orcidId,
+      timestamp: new Date().toISOString()
+    }
+  };
+  await docClient.send(new PutCommand(input));
+}
+
+async function getOrcidForHandle(handle: string): Promise<string | undefined> {
+  const result = await docClient.send(new QueryCommand({
+    TableName: process.env.VERIFICATION_TABLE,
+    IndexName: 'BlueskyHandleIndex',
+    KeyConditionExpression: 'blueskyHandle = :handle',
+    ExpressionAttributeValues: {
+      ':handle': handle
+    }
+  }));
+  return result.Items?.[0]?.orcidId;
+}
+
+interface OrcidName {
+  'given-names': { value: string };
+  'family-name': { value: string };
+}
+
+interface OrcidProfile {
+  name: OrcidName;
+}
+
+interface OrcidEmployment {
+  employment: Array<{
+    organization: {
+      name: { value: string };
+    };
+  }>;
+}
+
+interface OrcidWorks {
+  group: Array<any>;
+}
+
+interface VerificationData {
+  handle: string;
+  did: string;
+  orcidId: string;
+  status: 'pending' | 'verified' | 'failed';
+  verifiedAt?: string;
+  error?: string;
+  accessJwt?: string;
+  refreshJwt?: string;
+}
+
 export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
   // Handle OPTIONS request for CORS preflight
   if (event.httpMethod === 'OPTIONS') {
+    console.log('Handling OPTIONS request');
     return {
       statusCode: 200,
-      headers: corsHeaders,
+      headers: getCorsHeaders(event.headers.origin),
       body: ''
     };
   }
@@ -171,10 +235,25 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
   try {
     // Initialize OAuth client if not already initialized
     if (!oauthClient) {
+      console.log('Initializing OAuth client');
       await initializeOAuthClient();
+      if (!oauthClient) {
+        return {
+          statusCode: 500,
+          headers: getCorsHeaders(event.headers.origin),
+          body: JSON.stringify({ error: 'Failed to initialize OAuth client' })
+        };
+      }
     }
 
-    console.log('Received event:', JSON.stringify(event, null, 2));
+    console.log('Received event:', {
+      path: event.path,
+      httpMethod: event.httpMethod,
+      queryStringParameters: event.queryStringParameters,
+      headers: event.headers,
+      body: event.body
+    });
+
     console.log('Environment variables:', {
       CLIENT_ID: CLIENT_ID ? '***' : 'not set',
       REDIRECT_URI,
@@ -182,7 +261,9 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
       OAUTH_SESSION_TABLE: process.env.OAUTH_SESSION_TABLE,
       ORCID_CLIENT_ID: process.env.CLIENT_ID ? '***' : 'not set',
       ORCID_CLIENT_SECRET: process.env.CLIENT_SECRET ? '***' : 'not set',
-      OAUTH_TOKEN_URL: process.env.OAUTH_TOKEN_URL || 'not set'
+      OAUTH_TOKEN_URL: process.env.OAUTH_TOKEN_URL || 'not set',
+      PUBLIC_URL: PUBLIC_URL,
+      API_GATEWAY_URL: API_GATEWAY_URL
     });
 
     const { path, queryStringParameters } = event;
@@ -194,7 +275,7 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
         statusCode: 200,
         headers: {
           'Content-Type': 'application/json',
-          ...corsHeaders
+          ...getCorsHeaders(event.headers.origin)
         },
         body: JSON.stringify({
           client_id: `${PUBLIC_URL}/oauth/client-metadata.json`,
@@ -218,7 +299,7 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
     
     if (path === '/oauth/authorize') {
       // Handle authorization request
-      const state = generateRandomString(32);
+      let state = generateRandomString(32);
       console.log('Generated state:', state);
 
       const provider = queryStringParameters?.provider || ORCID_PROVIDER;
@@ -230,17 +311,19 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
         authUrl.searchParams.append('client_id', CLIENT_ID);
         authUrl.searchParams.append('response_type', 'code');
         authUrl.searchParams.append('scope', 'openid');
-        authUrl.searchParams.append('redirect_uri', REDIRECT_URI);
+        authUrl.searchParams.append('redirect_uri', `${PUBLIC_URL}/api/orcid/callback`);
         authUrl.searchParams.append('state', state);
         authUrl.searchParams.append('provider', 'orcid');
         
         return {
-          statusCode: 302,
+          statusCode: 200,
           headers: {
-            Location: authUrl.toString(),
-            ...corsHeaders
+            'Content-Type': 'application/json',
+            ...getCorsHeaders(event.headers.origin)
           },
-          body: ''
+          body: JSON.stringify({
+            authUrl: authUrl.toString()
+          })
         };
       } else if (provider === ATP_PROVIDER) {
         const handle = queryStringParameters?.handle;
@@ -249,60 +332,113 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
             statusCode: 400,
             headers: {
               'Content-Type': 'application/json',
-              ...corsHeaders
+              ...getCorsHeaders(event.headers.origin)
             },
             body: JSON.stringify({ error: 'Handle is required for Bluesky authorization' })
           };
         }
 
-        // Verify OAuth client is properly initialized
-        if (!oauthClient) {
-          await initializeOAuthClient();
+        // Store ORCID ID for the handle and modify state before authorization
+        if (queryStringParameters?.orcidId && queryStringParameters?.handle) {
+          // Normalize the handle to ensure it's in the correct format
+          const normalizedHandle = queryStringParameters.handle.replace(/,/g, '.');
+          
+          console.log('Storing ORCID ID for handle:', {
+            handle: normalizedHandle,
+            orcidId: queryStringParameters.orcidId
+          });
+          await storeOrcidForHandle(normalizedHandle, queryStringParameters.orcidId);
+          // Append ORCID ID, handle, and ORCID data to state parameter
+          const orcidData = {
+            name: queryStringParameters.name || '',
+            institutions: queryStringParameters.institutions || [],
+            numPublications: queryStringParameters.numPublications || 0
+          };
+          state = `${state}|${queryStringParameters.orcidId}|${normalizedHandle}|${orcidData.name}|${JSON.stringify(orcidData.institutions)}|${orcidData.numPublications}`;
+          console.log('Updated state with ORCID data:', state);
+
+          // Verify OAuth client is properly initialized
+          if (!oauthClient) {
+            await initializeOAuthClient();
+          }
+
+          if (!oauthClient.keyset) {
+            throw new Error('OAuth client keyset not initialized');
+          }
+
+          console.log('Initializing Bluesky authorization for handle:', normalizedHandle);
+          const url = await oauthClient.authorize(normalizedHandle, {
+            state,
+            scope: 'atproto',
+            redirect_uri: `${PUBLIC_URL}/api/atproto/callback`
+          });
+          console.log('Authorize URL:', url);
+
+          // Add provider parameter to the URL
+          const authUrl = new URL(url);
+          authUrl.searchParams.append('provider', 'atproto');
+          
+          // Store the state in DynamoDB so we can retrieve it later
+          const timestamp = Math.floor(Date.now() / 1000);
+          console.log('Storing state in DynamoDB:', {
+            key: state,
+            orcidId: queryStringParameters?.orcidId,
+            handle: queryStringParameters?.handle,
+            timestamp,
+            ttl: timestamp + 3600
+          });
+          await docClient.send(new PutCommand({
+            TableName: process.env.OAUTH_STATE_TABLE,
+            Item: {
+              key: state,
+              orcidId: queryStringParameters?.orcidId,
+              handle: queryStringParameters?.handle,
+              timestamp,
+              ttl: timestamp + 3600 // Expire in 1 hour
+            }
+          }));
+          
+          return {
+            statusCode: 302,
+            headers: {
+              Location: authUrl.toString(),
+              ...getCorsHeaders(event.headers.origin)
+            },
+            body: ''
+          };
+        } else {
+          return {
+            statusCode: 400,
+            headers: {
+              'Content-Type': 'application/json',
+              ...getCorsHeaders(event.headers.origin)
+            },
+            body: JSON.stringify({ error: 'Invalid provider' })
+          };
         }
-
-        if (!oauthClient.keyset) {
-          throw new Error('OAuth client keyset not initialized');
-        }
-
-        console.log('Initializing Bluesky authorization for handle:', handle);
-        const url = await oauthClient.authorize(handle, {
-          state,
-          scope: 'atproto',
-          redirect_uri: `${PUBLIC_URL}/api/atproto/callback`
-        });
-        console.log('Authorize URL:', url);
-
-        // Add provider parameter to the URL
-        const authUrl = new URL(url);
-        authUrl.searchParams.append('provider', 'atproto');
-        
-        return {
-          statusCode: 302,
-          headers: {
-            Location: authUrl.toString(),
-            ...corsHeaders
-          },
-          body: ''
-        };
       } else {
         return {
           statusCode: 400,
           headers: {
             'Content-Type': 'application/json',
-            ...corsHeaders
+            ...getCorsHeaders(event.headers.origin)
           },
           body: JSON.stringify({ error: 'Invalid provider' })
         };
       }
     } else if (path === '/oauth/callback') {
       // Handle callback
-      const { code, state, provider = ORCID_PROVIDER } = queryStringParameters || {};
-      console.log('Callback parameters:', { code, state, provider });
+      const { code, state, provider = ORCID_PROVIDER, orcidId } = queryStringParameters || {};
+      console.log('Callback parameters:', { code, state, provider, orcidId });
       
       if (!code || !state) {
         console.error('Missing required parameters:', { code, state });
         return {
           statusCode: 400,
+          headers: {
+            'Content-Type': 'application/json',
+            ...getCorsHeaders(event.headers.origin)
+          },
           body: JSON.stringify({ error: 'Missing required parameters' })
         };
       }
@@ -322,6 +458,10 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
         if (!orcidClientId || !orcidClientSecret) {
           return {
             statusCode: 500,
+            headers: {
+              'Content-Type': 'application/json',
+              ...getCorsHeaders(event.headers.origin)
+            },
             body: JSON.stringify({ error: 'ORCID client credentials not configured' })
           };
         }
@@ -345,6 +485,10 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
           console.error('Token exchange failed:', await tokenResponse.text());
           return {
             statusCode: 400,
+            headers: {
+              'Content-Type': 'application/json',
+              ...getCorsHeaders(event.headers.origin)
+            },
             body: JSON.stringify({ error: 'Failed to exchange authorization code for token' })
           };
         }
@@ -356,136 +500,372 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
         if (!accessToken || !orcidId) {
           return {
             statusCode: 400,
+            headers: {
+              'Content-Type': 'application/json',
+              ...getCorsHeaders(event.headers.origin)
+            },
             body: JSON.stringify({ error: 'No access token or ORCID ID in response' })
           };
         }
 
-        // Get ORCID profile
-        const profileUrl = `https://pub.orcid.org/v3.0/${orcidId}/record`;
-        const profileResponse = await fetch(profileUrl, {
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            'Accept': 'application/vnd.orcid+json'
-          }
-        });
-
-        if (!profileResponse.ok) {
+        // Get ORCID profile and related data
+        const profile = await getOrcidProfile(orcidId);
+        if (!profile) {
           return {
             statusCode: 400,
+            headers: {
+              'Content-Type': 'application/json',
+              ...getCorsHeaders(event.headers.origin)
+            },
             body: JSON.stringify({ error: 'Failed to get ORCID profile' })
           };
         }
 
-        const profileData = await profileResponse.json();
+        const name = extractNameFromProfile(profile);
+        const institutions = await extractVerifiedInstitution(orcidId);
+        const works = await fetchOrcidWorks(orcidId);
+        const pubmedSearch = await searchPubmedByOrcid(orcidId);
+        const pubmedArticles = pubmedSearch ? await fetchPubmedMetadata(pubmedSearch.esearchresult.idlist) : [];
 
+        // Store initial verification data
+        await storeVerificationData(
+          orcidId,
+          '', // Bluesky handle will be added later
+          '', // Bluesky DID will be added later
+          {
+            name,
+            institutions,
+            works,
+            pubmed_articles: pubmedArticles,
+            orcid_access_token: accessToken,
+            orcid_refresh_token: tokenData.refresh_token,
+            orcid_token_expires_in: tokenData.expires_in,
+            verification_status: 'pending_bluesky' // Add status to track verification progress
+          }
+        );
+
+        // Return the ORCID data to the frontend
         return {
           statusCode: 200,
+          headers: {
+            'Content-Type': 'application/json',
+            ...getCorsHeaders(event.headers.origin)
+          },
           body: JSON.stringify({ 
-            success: true,
-            orcid_id: orcidId,
-            profile: profileData
+            orcidId,
+            name,
+            institutions: institutions || [],
+            numPublications: works?.num_publications || 0,
+            status: 'pending_bluesky'
           })
         };
       } else if (provider === ATP_PROVIDER) {
-        try {
-          // Create URLSearchParams directly from the query string
-          const params = new URLSearchParams();
-          for (const [key, value] of Object.entries(queryStringParameters || {})) {
-            if (value) params.append(key, value);
-          }
-
-          console.log('Processing Bluesky callback with params:', {
-            code: params.get('code') ? '***' : 'not present',
-            iss: params.get('iss'),
-            provider: params.get('provider'),
-            state: params.get('state')
-          });
-
-          // Verify OAuth client is properly initialized
-          if (!oauthClient) {
-            throw new Error('OAuth client not initialized');
-          }
-
-          if (!oauthClient.keyset) {
-            throw new Error('OAuth client keyset not initialized');
-          }
-
-          // Log the state before callback
-          const state = params.get('state');
-          if (state) {
-            const storedState = await oauthClient.stateStore.get(state);
-            console.log('Stored state for callback:', storedState);
-          }
-
-          // Remove the provider parameter as it's not part of the OAuth spec
-          params.delete('provider');
-
-          // Ensure we have all required parameters
-          if (!params.get('code') || !params.get('iss') || !params.get('state')) {
-            throw new Error('Missing required OAuth parameters');
-          }
-
-          // Make the token request with DPoP
-          const result = await oauthClient.callback(params);
-          const session = result.session as ExtendedOAuthSession;
-          
-          console.log('Token exchange successful:', {
-            accessJwt: session.accessJwt ? '***' : 'not present',
-            refreshJwt: session.refreshJwt ? '***' : 'not present',
-            handle: session.handle,
-            did: session.did
-          });
-
+        if (!queryStringParameters) {
           return {
-            statusCode: 200,
+            statusCode: 400,
             headers: {
               'Content-Type': 'application/json',
-              'Access-Control-Allow-Origin': '*',
-              'Access-Control-Allow-Credentials': true
+              ...getCorsHeaders(event.headers.origin)
             },
-            body: JSON.stringify({ 
-              success: true,
-              handle: session.handle,
-              did: session.did
-            })
+            body: JSON.stringify({ error: 'Missing query parameters' })
           };
-        } catch (error: unknown) {
-          const err = error as Error;
-          console.error('Error exchanging token:', err);
-          console.error('Error details:', {
-            message: err.message,
-            stack: err.stack,
-            name: err.name,
-            oauthClient: oauthClient ? {
-              clientId: oauthClient.clientMetadata.client_id,
-              redirectUris: oauthClient.clientMetadata.redirect_uris,
-              keyset: oauthClient.keyset ? 'present' : 'missing'
-            } : 'not initialized'
-          });
+        }
+
+        const iss = queryStringParameters.iss;
+        if (!iss) {
           return {
-            statusCode: 500,
+            statusCode: 400,
             headers: {
               'Content-Type': 'application/json',
-              'Access-Control-Allow-Origin': '*',
-              'Access-Control-Allow-Credentials': true
+              ...getCorsHeaders(event.headers.origin)
             },
-            body: JSON.stringify({ 
-              error: 'Failed to exchange authorization code for token',
-              details: err.message
-            })
+            body: JSON.stringify({ error: 'Missing iss parameter' })
+          };
+        }
+
+        const provider = queryStringParameters.iss;
+        if (!provider) {
+          return {
+            statusCode: 400,
+            headers: getCorsHeaders(event.headers.origin),
+            body: JSON.stringify({ error: 'Missing provider parameter' })
+          };
+        }
+
+        if (provider === 'https://orcid.org') {
+          // ... existing code ...
+        } else if (provider === 'https://bsky.social') {
+          const code = queryStringParameters?.code;
+          if (!code) {
+            return {
+              statusCode: 400,
+              headers: getCorsHeaders(event.headers.origin),
+              body: JSON.stringify({ error: 'Missing code parameter' })
+            };
+          }
+
+          try {
+            // Get the ORCID ID from DynamoDB using the state
+            console.log('Retrieving state from DynamoDB:', {
+              key: queryStringParameters?.state,
+              table: process.env.OAUTH_STATE_TABLE
+            });
+            const stateResult = await docClient.send(new GetCommand({
+              TableName: process.env.OAUTH_STATE_TABLE,
+              Key: { key: queryStringParameters?.state }
+            }));
+            
+            console.log('State result from DynamoDB:', {
+              found: !!stateResult.Item,
+              item: stateResult.Item
+            });
+            
+            // Extract ORCID ID and handle from appState
+            const appState = stateResult.Item?.appState;
+            if (!appState) {
+              console.error('No appState found in state:', {
+                state: queryStringParameters?.state,
+                stateItem: stateResult.Item
+              });
+              throw new Error('No appState found for state');
+            }
+
+            const stateParts = appState.split('|');
+            const extractedOrcidId = stateParts[1];
+            const extractedHandle = stateParts[2];
+            const orcidData = {
+              name: stateParts[3] || '',
+              institutions: stateParts[4] ? JSON.parse(stateParts[4]) : [],
+              numPublications: parseInt(stateParts[5] || '0')
+            };
+            
+            if (!extractedOrcidId || !extractedHandle) {
+              console.error('No ORCID ID or handle found in appState:', {
+                appState,
+                state: queryStringParameters?.state
+              });
+              throw new Error('No ORCID ID or handle found in appState');
+            }
+            
+            console.log('Found ORCID data:', { 
+              orcidId: extractedOrcidId, 
+              handle: extractedHandle,
+              orcidData 
+            });
+            
+            // Verify OAuth client is properly initialized
+            if (!oauthClient) {
+              await initializeOAuthClient();
+            }
+
+            if (!oauthClient.keyset) {
+              throw new Error('OAuth client keyset not initialized');
+            }
+
+            console.log('Initializing Bluesky callback for handle:', extractedHandle);
+            const callbackResult = await oauthClient.callback(new URLSearchParams({ 
+              code,
+              state: queryStringParameters?.state || '',
+              iss: queryStringParameters?.iss || 'https://bsky.social'
+            }));
+
+            if (!callbackResult || !callbackResult.session) {
+              console.error('Failed to create session:', callbackResult);
+              throw new Error('Failed to create session');
+            }
+
+            // Extract session data
+            const oauthSession = callbackResult.session as ExtendedOAuthSession;
+            const did = oauthSession.sub;
+            
+            if (!did) {
+              console.error('Missing required session data:', {
+                did: !!did,
+                session: JSON.stringify(oauthSession, null, 2)
+              });
+              throw new Error('Missing required session data');
+            }
+
+            // Get the token set
+            const tokenSet = await oauthSession.getTokenSet();
+            
+            console.log('Successfully processed callback:', {
+              handle: extractedHandle,
+              did,
+              session: '***'
+            });
+
+            // Store verification data in DynamoDB
+            const verificationData = {
+              orcidId: extractedOrcidId,
+              handle: extractedHandle,
+              did,
+              name: orcidData.name,
+              institutions: orcidData.institutions,
+              numPublications: orcidData.numPublications,
+              status: 'verified',
+              verifiedAt: new Date().toISOString(),
+              session: {
+                accessJwt: tokenSet.access_token,
+                refreshJwt: tokenSet.refresh_token,
+                handle: oauthSession.handle,
+                did: oauthSession.sub,
+                service: oauthSession.service
+              }
+            };
+
+            await docClient.send(new PutCommand({
+              TableName: process.env.VERIFICATION_TABLE,
+              Item: verificationData
+            }));
+
+            // Return success response with ORCID data
+            return {
+              statusCode: 200,
+              headers: {
+                'Content-Type': 'application/json',
+                ...getCorsHeaders(event.headers.origin)
+              },
+              body: JSON.stringify({ 
+                success: true,
+                orcidId: extractedOrcidId,
+                name: orcidData.name,
+                institutions: orcidData.institutions,
+                numPublications: orcidData.numPublications,
+                handle: extractedHandle,
+                did
+              })
+            };
+          } catch (error) {
+            console.error('Error in Bluesky callback:', error);
+            return {
+              statusCode: 500,
+              headers: getCorsHeaders(event.headers.origin),
+              body: JSON.stringify({ error: 'Failed to process Bluesky callback' })
+            };
+          }
+        } else {
+          return {
+            statusCode: 400,
+            headers: {
+              'Content-Type': 'application/json',
+              ...getCorsHeaders(event.headers.origin)
+            },
+            body: JSON.stringify({ error: 'Invalid provider' })
           };
         }
       } else {
         return {
           statusCode: 400,
+          headers: {
+            'Content-Type': 'application/json',
+            ...getCorsHeaders(event.headers.origin)
+          },
           body: JSON.stringify({ error: 'Invalid provider' })
         };
       }
+    } else if (path === '/labels') {
+      try {
+        // Check for authorization token
+        const authHeader = event.headers.Authorization || event.headers.authorization;
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+          console.error('Missing or invalid authorization header:', authHeader);
+          return {
+            statusCode: 401,
+            headers: getCorsHeaders(event.headers.origin),
+            body: JSON.stringify({ error: 'Missing or invalid authorization token' })
+          };
+        }
+
+        const token = authHeader.split(' ')[1];
+        if (token !== process.env.API_TOKEN) {
+          console.error('Invalid token provided:', token);
+          return {
+            statusCode: 401,
+            headers: getCorsHeaders(event.headers.origin),
+            body: JSON.stringify({ error: 'Invalid authorization token' })
+          };
+        }
+
+        const { action, handle, did, data, orcidId } = JSON.parse(event.body || '{}');
+        console.log('Received label request:', { action, handle, did, data, orcidId });
+
+        if (!action || !handle || !did) {
+          console.error('Missing required parameters:', { action, handle, did });
+          return {
+            statusCode: 400,
+            headers: getCorsHeaders(event.headers.origin),
+            body: JSON.stringify({ error: 'Missing required parameters' })
+          };
+        }
+
+        if (action === 'add') {
+          console.log('Adding labels with data:', data);
+          await addLabels(handle, did, data);
+          return {
+            statusCode: 200,
+            headers: getCorsHeaders(event.headers.origin),
+            body: JSON.stringify({ success: true })
+          };
+        } else if (action === 'remove') {
+          if (!orcidId) {
+            console.error('Missing ORCID ID for remove action');
+            return {
+              statusCode: 400,
+              headers: getCorsHeaders(event.headers.origin),
+              body: JSON.stringify({ error: 'ORCID ID is required for removing labels' })
+            };
+          }
+          console.log('Removing labels for ORCID:', orcidId);
+          await removeLabels(handle, did, orcidId);
+          return {
+            statusCode: 200,
+            headers: getCorsHeaders(event.headers.origin),
+            body: JSON.stringify({ success: true })
+          };
+        } else {
+          console.error('Invalid action:', action);
+          return {
+            statusCode: 400,
+            headers: getCorsHeaders(event.headers.origin),
+            body: JSON.stringify({ error: 'Invalid action' })
+          };
+        }
+      } catch (error) {
+        console.error('Error handling labels:', error);
+        console.error('Error details:', {
+          message: error instanceof Error ? error.message : 'Unknown error',
+          stack: error instanceof Error ? error.stack : undefined,
+          event: {
+            headers: event.headers,
+            body: event.body
+          }
+        });
+        return {
+          statusCode: 500,
+          headers: getCorsHeaders(event.headers.origin),
+          body: JSON.stringify({ error: 'Failed to handle labels' })
+        };
+      }
+    } else {
+      console.error('Invalid path:', path);
+      return {
+        statusCode: 404,
+        headers: {
+          'Content-Type': 'application/json',
+          ...getCorsHeaders(event.headers.origin)
+        },
+        body: JSON.stringify({ error: 'Not found' })
+      };
     }
 
-    console.error('Invalid path:', path);
+    // Add default return statement
     return {
       statusCode: 404,
+      headers: {
+        'Content-Type': 'application/json',
+        ...getCorsHeaders(event.headers.origin)
+      },
       body: JSON.stringify({ error: 'Not found' })
     };
   } catch (error: any) {
@@ -497,7 +877,14 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
     });
     return {
       statusCode: 500,
-      body: JSON.stringify({ error: 'Internal server error' })
+      headers: {
+        'Content-Type': 'application/json',
+        ...getCorsHeaders(event.headers.origin)
+      },
+      body: JSON.stringify({ 
+        error: 'Internal server error',
+        details: error.message
+      })
     };
   }
 };

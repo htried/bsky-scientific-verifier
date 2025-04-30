@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
             }
         });
 
-        if (!response.ok) {
+            if (!response.ok) {
             const errorText = await response.text();
             console.error('Failed to initiate Bluesky authentication:', {
                 status: response.status,
@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
                 error: errorText
             });
             throw new Error(`Failed to initiate Bluesky authentication: ${errorText}`);
-        }
+            }
 
         // The response should be a redirect
         const location = response.headers.get('location');

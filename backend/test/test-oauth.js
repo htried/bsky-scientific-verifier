@@ -69,12 +69,12 @@ async function testCallback(provider, code, state) {
         }
         
         console.log('Callback URL:', callbackUrl);
-        
+            
         const response = await axios.get(callbackUrl, {
             headers,
             maxRedirects: 0
         });
-        
+
         console.log('Callback response:', response.data);
     } catch (error) {
         console.error('Error:', error.message);
