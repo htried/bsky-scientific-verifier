@@ -207,7 +207,12 @@ interface OrcidEmployment {
 }
 
 interface OrcidWorks {
-  group: Array<any>;
+  num_publications: number;
+  publicationYears: number[];
+  publicationTypes: string[];
+  dois: string[];
+  publicationTitles: string[];
+  publicationJournals: string[];
 }
 
 interface VerificationData {
@@ -560,10 +565,10 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
             name,
             institutions: institutions || [],
             numPublications: works?.num_publications || 0,
-            publicationYears: works?.publication_years || [],
-            publicationTypes: works?.publication_types || [],
-            publicationTitles: works?.titles || [],
-            publicationJournals: works?.journals || [],
+            publicationYears: works?.publicationYears || [],
+            publicationTypes: works?.publicationTypes || [],
+            publicationTitles: works?.publicationTitles || [],
+            publicationJournals: works?.publicationJournals || [],
             status: 'pending_bluesky'
           })
         };
