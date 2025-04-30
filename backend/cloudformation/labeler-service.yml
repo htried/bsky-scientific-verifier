@@ -1,0 +1,144 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation template for the Bluesky Labeler Service'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: production
+    AllowedValues: [development, staging, production]
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+  EcrRepositoryUri:
+    Type: String
+  EcrImageTag:
+    Type: String
+    Default: latest
+  LabelerDid:
+    Type: String
+    Default: did:plc:b7rzlpwqc2qkqfil63t5bd6u
+  LabelerDbUrl:
+    Type: String
+    Default: libsql://bsky-labeler-htried.aws-us-east-1.turso.io
+  BskyIdentifier:
+    Type: String
+    Default: ruff-specialist.bsky.social
+
+Resources:
+  LabelerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/ecs/bsky-labeler-${Environment}'
+      RetentionInDays: 30
+
+  LabelerTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub 'bsky-labeler-${Environment}'
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: '256'
+      Memory: '512'
+      ExecutionRoleArn: !GetAtt LabelerTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt LabelerTaskRole.Arn
+      ContainerDefinitions:
+        - Name: labeler
+          Image: !Sub '${EcrRepositoryUri}:${EcrImageTag}'
+          Essential: true
+          PortMappings:
+            - ContainerPort: 14831
+              Protocol: tcp
+          Environment:
+            - Name: PORT
+              Value: '14831'
+            - Name: LABELER_DID
+              Value: !Ref LabelerDid
+            - Name: LABELER_DB_URL
+              Value: !Ref LabelerDbUrl
+            - Name: BSKY_IDENTIFIER
+              Value: !Ref BskyIdentifier
+          Secrets:
+            - Name: LABELER_SIGNING_KEY
+              ValueFrom: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:/bsky-labeler/${Environment}/signing-key'
+            - Name: LABELER_DB_TOKEN
+              ValueFrom: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:/bsky-labeler/${Environment}/db-token'
+            - Name: BSKY_PASSWORD
+              ValueFrom: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:/bsky-labeler/${Environment}/bsky-password'
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LabelerLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: labeler
+              awslogs-create-group: 'true'
+
+  LabelerService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: !Sub 'bsky-labeler-${Environment}'
+      Cluster: !Ref EcsCluster
+      TaskDefinition: !Ref LabelerTaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets: !Ref SubnetIds
+          SecurityGroups:
+            - !Ref LabelerSecurityGroup
+
+  LabelerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for the labeler service
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 14831
+          ToPort: 14831
+          CidrIp: 0.0.0.0/0
+
+  LabelerTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+        - arn:aws:iam::aws:policy/SecretsManagerReadWrite
+      Policies:
+        - PolicyName: CloudWatchLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/ecs/bsky-labeler-${Environment}:*'
+
+  LabelerTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMReadOnlyAccess
+        - arn:aws:iam::aws:policy/SecretsManagerReadWrite
+
+  EcsCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub 'bsky-labeler-${Environment}' 

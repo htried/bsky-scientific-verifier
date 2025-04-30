@@ -1,0 +1,30 @@
+{
+  "name": "bsky-scientific-verifier-lambda",
+  "version": "1.0.0",
+  "description": "Lambda function for Bsky Scientific Verifier OAuth handling",
+  "main": "dist/index.js",
+  "scripts": {
+    "clean": "rm -rf dist && mkdir -p dist",
+    "build": "npm run clean && tsc && npm run bundle",
+    "bundle": "cp -r node_modules dist/ && cp package.json dist/",
+    "package": "cd dist && zip -r ../function.zip .",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "@atproto/api": "^0.9.0",
+    "@atproto/oauth-client-node": "^0.1.0",
+    "@aws-sdk/client-dynamodb": "^3.0.0",
+    "@aws-sdk/client-secrets-manager": "^3.0.0",
+    "@aws-sdk/lib-dynamodb": "^3.0.0",
+    "axios": "^1.6.0",
+    "source-map-support": "^0.5.21",
+    "@skyware/bot": "^0.3.7",
+    "@skyware/jetstream": "^0.2.0",
+    "@skyware/labeler": "^0.1.13"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+} 
