@@ -13,7 +13,7 @@ import {
   fetchPubmedMetadata,
   storeVerificationData
 } from './orcid-utils';
-import { addLabels, removeLabels } from './labels';
+// import { addLabels, removeLabels } from './labels';
 
 const client = new DynamoDBClient({});
 const docClient = DynamoDBDocumentClient.from(client, {
@@ -352,9 +352,13 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
           const orcidData = {
             name: queryStringParameters.name || '',
             institutions: queryStringParameters.institutions || [],
-            numPublications: queryStringParameters.numPublications || 0
+            numPublications: queryStringParameters.numPublications || 0,
+            publicationYears: queryStringParameters.publicationYears || [],
+            publicationTypes: queryStringParameters.publicationTypes || [],
+            publicationTitles: queryStringParameters.publicationTitles || [],
+            publicationJournals: queryStringParameters.publicationJournals || []
           };
-          state = `${state}|${queryStringParameters.orcidId}|${normalizedHandle}|${orcidData.name}|${JSON.stringify(orcidData.institutions)}|${orcidData.numPublications}`;
+          state = `${state}|${queryStringParameters.orcidId}|${normalizedHandle}|${orcidData.name}|${JSON.stringify(orcidData.institutions)}|${orcidData.numPublications}|${JSON.stringify(orcidData.publicationYears)}|${JSON.stringify(orcidData.publicationTypes)}|${JSON.stringify(orcidData.publicationTitles)}|${JSON.stringify(orcidData.publicationJournals)}`;
           console.log('Updated state with ORCID data:', state);
 
           // Verify OAuth client is properly initialized
@@ -556,6 +560,10 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
             name,
             institutions: institutions || [],
             numPublications: works?.num_publications || 0,
+            publicationYears: works?.publication_years || [],
+            publicationTypes: works?.publication_types || [],
+            publicationTitles: works?.titles || [],
+            publicationJournals: works?.journals || [],
             status: 'pending_bluesky'
           })
         };
@@ -636,7 +644,11 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
             const orcidData = {
               name: stateParts[3] || '',
               institutions: stateParts[4] ? JSON.parse(stateParts[4]) : [],
-              numPublications: parseInt(stateParts[5] || '0')
+              numPublications: parseInt(stateParts[5] || '0'),
+              publicationYears: stateParts[6] ? JSON.parse(stateParts[6]) : [],
+              publicationTypes: stateParts[7] ? JSON.parse(stateParts[7]) : [],
+              publicationTitles: stateParts[8] ? JSON.parse(stateParts[8]) : [],
+              publicationJournals: stateParts[9] ? JSON.parse(stateParts[9]) : []
             };
             
             if (!extractedOrcidId || !extractedHandle) {
@@ -732,6 +744,10 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
                 name: orcidData.name,
                 institutions: orcidData.institutions,
                 numPublications: orcidData.numPublications,
+                publicationYears: orcidData.publicationYears,
+                publicationTypes: orcidData.publicationTypes,
+                publicationTitles: orcidData.publicationTitles,
+                publicationJournals: orcidData.publicationJournals,
                 handle: extractedHandle,
                 did
               })
@@ -764,89 +780,89 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
           body: JSON.stringify({ error: 'Invalid provider' })
         };
       }
-    } else if (path === '/labels') {
-      try {
-        // Check for authorization token
-        const authHeader = event.headers.Authorization || event.headers.authorization;
-        if (!authHeader || !authHeader.startsWith('Bearer ')) {
-          console.error('Missing or invalid authorization header:', authHeader);
-          return {
-            statusCode: 401,
-            headers: getCorsHeaders(event.headers.origin),
-            body: JSON.stringify({ error: 'Missing or invalid authorization token' })
-          };
-        }
+    // } else if (path === '/labels') {
+    //   try {
+    //     // Check for authorization token
+    //     const authHeader = event.headers.Authorization || event.headers.authorization;
+    //     if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    //       console.error('Missing or invalid authorization header:', authHeader);
+    //       return {
+    //         statusCode: 401,
+    //         headers: getCorsHeaders(event.headers.origin),
+    //         body: JSON.stringify({ error: 'Missing or invalid authorization token' })
+    //       };
+    //     }
 
-        const token = authHeader.split(' ')[1];
-        if (token !== process.env.API_TOKEN) {
-          console.error('Invalid token provided:', token);
-          return {
-            statusCode: 401,
-            headers: getCorsHeaders(event.headers.origin),
-            body: JSON.stringify({ error: 'Invalid authorization token' })
-          };
-        }
+    //     const token = authHeader.split(' ')[1];
+    //     if (token !== process.env.API_TOKEN) {
+    //       console.error('Invalid token provided:', token);
+    //       return {
+    //         statusCode: 401,
+    //         headers: getCorsHeaders(event.headers.origin),
+    //         body: JSON.stringify({ error: 'Invalid authorization token' })
+    //       };
+    //     }
 
-        const { action, handle, did, data, orcidId } = JSON.parse(event.body || '{}');
-        console.log('Received label request:', { action, handle, did, data, orcidId });
+    //     const { action, handle, did, data, orcidId } = JSON.parse(event.body || '{}');
+    //     console.log('Received label request:', { action, handle, did, data, orcidId });
 
-        if (!action || !handle || !did) {
-          console.error('Missing required parameters:', { action, handle, did });
-          return {
-            statusCode: 400,
-            headers: getCorsHeaders(event.headers.origin),
-            body: JSON.stringify({ error: 'Missing required parameters' })
-          };
-        }
+    //     if (!action || !handle || !did) {
+    //       console.error('Missing required parameters:', { action, handle, did });
+    //       return {
+    //         statusCode: 400,
+    //         headers: getCorsHeaders(event.headers.origin),
+    //         body: JSON.stringify({ error: 'Missing required parameters' })
+    //       };
+    //     }
 
-        if (action === 'add') {
-          console.log('Adding labels with data:', data);
-          await addLabels(handle, did, data);
-          return {
-            statusCode: 200,
-            headers: getCorsHeaders(event.headers.origin),
-            body: JSON.stringify({ success: true })
-          };
-        } else if (action === 'remove') {
-          if (!orcidId) {
-            console.error('Missing ORCID ID for remove action');
-            return {
-              statusCode: 400,
-              headers: getCorsHeaders(event.headers.origin),
-              body: JSON.stringify({ error: 'ORCID ID is required for removing labels' })
-            };
-          }
-          console.log('Removing labels for ORCID:', orcidId);
-          await removeLabels(handle, did, orcidId);
-          return {
-            statusCode: 200,
-            headers: getCorsHeaders(event.headers.origin),
-            body: JSON.stringify({ success: true })
-          };
-        } else {
-          console.error('Invalid action:', action);
-          return {
-            statusCode: 400,
-            headers: getCorsHeaders(event.headers.origin),
-            body: JSON.stringify({ error: 'Invalid action' })
-          };
-        }
-      } catch (error) {
-        console.error('Error handling labels:', error);
-        console.error('Error details:', {
-          message: error instanceof Error ? error.message : 'Unknown error',
-          stack: error instanceof Error ? error.stack : undefined,
-          event: {
-            headers: event.headers,
-            body: event.body
-          }
-        });
-        return {
-          statusCode: 500,
-          headers: getCorsHeaders(event.headers.origin),
-          body: JSON.stringify({ error: 'Failed to handle labels' })
-        };
-      }
+    //     if (action === 'add') {
+    //       console.log('Adding labels with data:', data);
+    //       await addLabels(handle, did, data);
+    //       return {
+    //         statusCode: 200,
+    //         headers: getCorsHeaders(event.headers.origin),
+    //         body: JSON.stringify({ success: true })
+    //       };
+    //     } else if (action === 'remove') {
+    //       if (!orcidId) {
+    //         console.error('Missing ORCID ID for remove action');
+    //         return {
+    //           statusCode: 400,
+    //           headers: getCorsHeaders(event.headers.origin),
+    //           body: JSON.stringify({ error: 'ORCID ID is required for removing labels' })
+    //         };
+    //       }
+    //       console.log('Removing labels for ORCID:', orcidId);
+    //       await removeLabels(handle, did, orcidId);
+    //       return {
+    //         statusCode: 200,
+    //         headers: getCorsHeaders(event.headers.origin),
+    //         body: JSON.stringify({ success: true })
+    //       };
+    //     } else {
+    //       console.error('Invalid action:', action);
+    //       return {
+    //         statusCode: 400,
+    //         headers: getCorsHeaders(event.headers.origin),
+    //         body: JSON.stringify({ error: 'Invalid action' })
+    //       };
+    //     }
+    //   } catch (error) {
+    //     console.error('Error handling labels:', error);
+    //     console.error('Error details:', {
+    //       message: error instanceof Error ? error.message : 'Unknown error',
+    //       stack: error instanceof Error ? error.stack : undefined,
+    //       event: {
+    //         headers: event.headers,
+    //         body: event.body
+    //       }
+    //     });
+    //     return {
+    //       statusCode: 500,
+    //       headers: getCorsHeaders(event.headers.origin),
+    //       body: JSON.stringify({ error: 'Failed to handle labels' })
+    //     };
+    //   }
     } else {
       console.error('Invalid path:', path);
       return {

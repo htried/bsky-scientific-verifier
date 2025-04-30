@@ -41,6 +41,10 @@ export async function GET(request: NextRequest) {
         const name = data.name;
         const institutions = data.institutions;
         const numPublications = data.numPublications;
+        const publicationYears = data.publicationYears || [];
+        const publicationTypes = data.publicationTypes || [];
+        const publicationTitles = data.publicationTitles || [];
+        const publicationJournals = data.publicationJournals || [];
         
         if (!orcidId || !name || !institutions || !numPublications) {
             console.error('Missing ORCID data in response:', data);
@@ -56,6 +60,10 @@ export async function GET(request: NextRequest) {
         redirectUrl.searchParams.set('status', 'verified');
         redirectUrl.searchParams.set('handle', data.handle);
         redirectUrl.searchParams.set('did', data.did);
+        redirectUrl.searchParams.set('publicationYears', JSON.stringify(publicationYears));
+        redirectUrl.searchParams.set('publicationTypes', JSON.stringify(publicationTypes));
+        redirectUrl.searchParams.set('publicationTitles', JSON.stringify(publicationTitles));
+        redirectUrl.searchParams.set('publicationJournals', JSON.stringify(publicationJournals));
 
         return NextResponse.redirect(redirectUrl);
     } catch (error) {

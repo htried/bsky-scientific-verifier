@@ -1,1 +1,1 @@
-export { LABEL_DEFINITIONS } from '../shared/labels.js'; 
+// export { LABEL_DEFINITIONS } from '../shared/labels.js'; 

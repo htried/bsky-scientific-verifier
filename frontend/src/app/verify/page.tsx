@@ -9,6 +9,10 @@ interface VerificationData {
   institutions: string[];
   numPublications: number;
   status: string;
+  publicationYears?: number[];
+  publicationTypes?: string[];
+  publicationTitles?: string[];
+  publicationJournals?: string[];
 }
 
 export default function VerifyPage() {
@@ -31,31 +35,32 @@ export default function VerifyPage() {
     const institutionsParam = searchParams.get('institutions');
     const numPublications = searchParams.get('numPublications');
     const status = searchParams.get('status');
+    const publicationYearsParam = searchParams.get('publicationYears');
+    const publicationTypesParam = searchParams.get('publicationTypes');
+    const publicationTitlesParam = searchParams.get('publicationTitles');
+    const publicationJournalsParam = searchParams.get('publicationJournals');
 
     if (!orcidId || !name || !numPublications || !status) {
       setError('Missing required verification data');
       return;
     }
 
-    // Parse institutions from JSON string
-    let institutions: string[] = [];
-    try {
-      if (institutionsParam) {
-        const decoded = decodeURIComponent(institutionsParam);
-        const parsed = JSON.parse(decoded);
-        institutions = Array.isArray(parsed) ? parsed : [];
-      }
-    } catch (e) {
-      console.error('Error parsing institutions:', e);
-      institutions = [];
-    }
+    const institutions = institutionsParam ? JSON.parse(institutionsParam) : [];
+    const publicationYears = publicationYearsParam ? JSON.parse(publicationYearsParam) : [];
+    const publicationTypes = publicationTypesParam ? JSON.parse(publicationTypesParam) : [];
+    const publicationTitles = publicationTitlesParam ? JSON.parse(publicationTitlesParam) : [];
+    const publicationJournals = publicationJournalsParam ? JSON.parse(publicationJournalsParam) : [];
 
     setVerificationData({
       orcidId,
       name,
       institutions,
       numPublications: parseInt(numPublications),
-      status
+      status,
+      publicationYears,
+      publicationTypes,
+      publicationTitles,
+      publicationJournals
     });
   }, []);
 
@@ -121,7 +126,7 @@ export default function VerifyPage() {
           <div className="space-y-6">
             <div className="card-section">
               <h3 className="font-medium text-gray-200 mb-3">Verified ORCID Profile</h3>
-              <div className="space-y-2">
+              <div className="space-y-2 bg-gray-800/50 p-4 rounded-lg ring-1 ring-gray-700 ring-inset">
                 <p className="text-gray-300">ID: <span className="text-blue-400 font-mono">{verificationData.orcidId}</span></p>
                 <p className="text-gray-300">Name: <span className="text-blue-400">{verificationData.name}</span></p>
               </div>
@@ -130,22 +135,74 @@ export default function VerifyPage() {
             {verificationData.institutions && verificationData.institutions.length > 0 && (
               <div className="card-section">
                 <h3 className="font-medium text-gray-200 mb-3">Institutions</h3>
-                <p className="text-gray-300">
-                  {typeof verificationData.institutions === 'string' 
-                    ? verificationData.institutions 
-                    : verificationData.institutions.join(', ')}
-                </p>
+                <div className="bg-gray-800/50 p-4 rounded-lg ring-1 ring-gray-700 ring-inset">
+                  <p className="text-gray-300">
+                    {typeof verificationData.institutions === 'string' 
+                      ? verificationData.institutions 
+                      : verificationData.institutions.join(', ')}
+                  </p>
+                </div>
               </div>
             )}
 
             <div className="card-section">
               <h3 className="font-medium text-gray-200 mb-3">Publications</h3>
-              <p className="text-gray-300">{verificationData.numPublications} publications found</p>
+              <div className="bg-gray-800/50 p-4 rounded-lg ring-1 ring-gray-700 ring-inset">
+                <p className="text-gray-300">{verificationData.numPublications} publications found</p>
+                
+                {verificationData.publicationYears && verificationData.publicationYears.length > 0 && (
+                  <div className="mt-4">
+                    <h4 className="font-medium text-gray-200 mb-2">Publication Years</h4>
+                    <p className="text-gray-300">
+                      Earliest published work: {Math.min(...verificationData.publicationYears)}
+                      <br />
+                      Latest published work: {Math.max(...verificationData.publicationYears)}
+                    </p>
+                  </div>
+                )}
+
+                {verificationData.publicationTypes && verificationData.publicationTypes.length > 0 && (
+                  <div className="mt-4">
+                    <h4 className="font-medium text-gray-200 mb-2">Publication Types</h4>
+                    <p className="text-gray-300">
+                      {verificationData.publicationTypes.join(', ')}
+                    </p>
+                  </div>
+                )}
+
+                {verificationData.publicationTitles && verificationData.publicationTitles.length > 0 && (
+                  <div className="mt-4">
+                    <h4 className="font-medium text-gray-200 mb-2">Recent Publications</h4>
+                    <ul className="space-y-2">
+                      {verificationData.publicationTitles.slice(0, 5).map((title, index) => (
+                        <li key={index} className="text-gray-300">
+                          {title}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {verificationData.publicationJournals && verificationData.publicationJournals.length > 0 && (
+                  <div className="mt-4">
+                    <h4 className="font-medium text-gray-200 mb-2">Recent Publication Venues</h4>
+                    <ul className="space-y-2">
+                      {verificationData.publicationJournals.slice(0, 5).map((journal, index) => (
+                        <li key={index} className="text-gray-300">
+                          {journal}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="card-section">
               <h3 className="font-medium text-gray-200 mb-3">Status</h3>
-              <p className="text-gray-300">{verificationData.status}</p>
+              <div className="bg-gray-800/50 p-4 rounded-lg ring-1 ring-gray-700 ring-inset">
+                <p className="text-gray-300">{verificationData.status}</p>
+              </div>
             </div>
 
             {verificationData.status === 'pending_bluesky' && (

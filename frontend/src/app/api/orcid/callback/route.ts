@@ -46,6 +46,10 @@ export async function GET(request: NextRequest) {
     redirectUrl.searchParams.set('institutions', JSON.stringify(institutions));
     redirectUrl.searchParams.set('numPublications', orcidData.numPublications.toString());
     redirectUrl.searchParams.set('status', orcidData.status);
+    redirectUrl.searchParams.set('publicationYears', JSON.stringify(orcidData.publicationYears || []));
+    redirectUrl.searchParams.set('publicationTypes', JSON.stringify(orcidData.publicationTypes || []));
+    redirectUrl.searchParams.set('publicationTitles', JSON.stringify(orcidData.publicationTitles || []));
+    redirectUrl.searchParams.set('publicationJournals', JSON.stringify(orcidData.publicationJournals || []));
 
     return NextResponse.redirect(redirectUrl);
   } catch (error) {

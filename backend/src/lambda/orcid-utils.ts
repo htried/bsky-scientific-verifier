@@ -238,11 +238,11 @@ export async function fetchOrcidWorks(orcidId: string) {
 
     return {
       num_publications: works.length,
-      publication_years: publicationYears,
-      publication_types: publicationTypes,
+      publication_years: [...new Set(publicationYears)],
+      publication_types: [...new Set(publicationTypes)],
       dois: dois,
       titles: titles,
-      journals: journals
+      journals: [...new Set(journals)]
     };
   } catch (error) {
     console.error('Error fetching ORCID works:', error);

@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { initiateBlueskyAuth } from '@/lib/bluesky-auth';
 
 interface OrcidData {
   id: string;
@@ -85,11 +84,11 @@ export default function Home() {
           </p>
           <ol className="space-y-4 text-gray-300">
             <li className="card-section">
-              <span className="font-medium text-blue-400">ORCID Verification:</span>
+              <span className="font-medium text-blue-400">ORCID Verification: </span>
               <span className="ml-2">Connect your ORCID account to verify your academic identity, publications, and affiliations.</span>
             </li>
             <li className="card-section">
-              <span className="font-medium text-blue-400">Bluesky Connection:</span>
+              <span className="font-medium text-blue-400">Bluesky Connection: </span>
               <span className="ml-2">Link your verified academic identity to your Bluesky account.</span>
             </li>
           </ol>
