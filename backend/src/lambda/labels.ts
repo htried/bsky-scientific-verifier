@@ -1,1 +1,0 @@
-// export { LABEL_DEFINITIONS } from '../shared/labels.js'; 
