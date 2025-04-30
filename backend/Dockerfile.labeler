@@ -1,0 +1,22 @@
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies
+RUN npm install
+
+# Copy source code
+COPY src/ ./src/
+COPY tsconfig.labeler.json ./
+
+# Build TypeScript
+RUN npm run build -- --project tsconfig.labeler.json && ls -la dist/
+
+# Expose the port the labeler service will run on
+EXPOSE 14831
+
+# Start the labeler service
+CMD ["node", "dist/labeler-service.js"] 

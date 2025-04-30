@@ -1,3 +1,6 @@
+src/verifier/infrastructure/cdk.out
+*/node_modules
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -14,7 +17,7 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+# lib/
 lib64/
 parts/
 sdist/
@@ -172,3 +175,10 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+backend/backend/src/infrastructure/cdk.out/
+backend/cdk.out/
+backend/backend/src/infrastructure/node_modules/
+backend/src/infrastructure/cdk.out/
+backend/src/lambda/node_modules/
+backend/src/lambda/dist/
