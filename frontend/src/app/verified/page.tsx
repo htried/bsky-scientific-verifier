@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-// import { addBlueskyLabels, removeBlueskyLabels } from '@/lib/bluesky-auth';
+import Footer from '@/components/Footer';
 
 interface VerificationData {
   orcidId: string;
@@ -38,18 +38,76 @@ export default function VerifiedPage() {
     const publicationTitlesParam = searchParams.get('publicationTitles');
     const publicationJournalsParam = searchParams.get('publicationJournals');
 
+    // Log raw received data
+    console.log('Raw URL Parameters:', {
+      orcidId,
+      name,
+      institutionsParam,
+      numPublications,
+      status,
+      blueskyHandle,
+      blueskyDid,
+      publicationYearsParam,
+      publicationTypesParam,
+      publicationTitlesParam,
+      publicationJournalsParam
+    });
+
     if (!orcidId || !name || !numPublications || !status || !blueskyHandle || !blueskyDid) {
       setError('Missing required verification data');
       return;
     }
 
-    const institutions = institutionsParam ? JSON.parse(institutionsParam) : [];
-    const publicationYears = publicationYearsParam ? JSON.parse(publicationYearsParam) : [];
-    const publicationTypes = publicationTypesParam ? JSON.parse(publicationTypesParam) : [];
-    const publicationTitles = publicationTitlesParam ? JSON.parse(publicationTitlesParam) : [];
-    const publicationJournals = publicationJournalsParam ? JSON.parse(publicationJournalsParam) : [];
+    const institutions = institutionsParam ? JSON.parse(JSON.parse(institutionsParam)) : [];
+    
+    // Parse publication years - handle double-encoded JSON
+    let publicationYears: number[] = [];
+    if (publicationYearsParam) {
+      try {
+        publicationYears = JSON.parse(JSON.parse(publicationYearsParam));
+        console.log('Parsed Publication Years:', publicationYears);
+      } catch (e) {
+        console.error('Failed to parse publication years:', e);
+      }
+    }
 
-    setVerificationData({
+    // Parse publication types - handle double-encoded JSON
+    let publicationTypes: string[] = [];
+    if (publicationTypesParam) {
+      try {
+        publicationTypes = JSON.parse(JSON.parse(publicationTypesParam))
+          .map((type: string) => type.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase()));
+        console.log('Parsed Publication Types:', publicationTypes);
+      } catch (e) {
+        console.error('Failed to parse publication types:', e);
+      }
+    }
+
+    // Parse publication titles - handle double-encoded JSON
+    let publicationTitles: string[] = [];
+    if (publicationTitlesParam) {
+      try {
+        publicationTitles = JSON.parse(JSON.parse(publicationTitlesParam))
+          .map((title: string) => title.trim());
+        console.log('Parsed Publication Titles:', publicationTitles);
+      } catch (e) {
+        console.error('Failed to parse publication titles:', e);
+      }
+    }
+
+    // Parse publication journals - handle double-encoded JSON
+    let publicationJournals: string[] = [];
+    if (publicationJournalsParam) {
+      try {
+        publicationJournals = JSON.parse(JSON.parse(publicationJournalsParam))
+          .map((journal: string) => journal.trim());
+        console.log('Parsed Publication Journals:', publicationJournals);
+      } catch (e) {
+        console.error('Failed to parse publication journals:', e);
+      }
+    }
+
+    const finalData = {
       orcidId,
       name,
       institutions,
@@ -61,66 +119,137 @@ export default function VerifiedPage() {
       publicationTypes,
       publicationTitles,
       publicationJournals
-    });
+    };
+
+    console.log('Final Parsed Data:', finalData);
+    setVerificationData(finalData);
   }, []);
 
-  const alert_message = `Bluesky labeling integration to come...
-Labels that will be added will include:
-- Verified Scientist
-- Publication count (0-9, 10-99, 100-999, 1000+)
-- Publication year range (0-4 years, 5-9 years, 10-19 years, 20+ years)
-- Focus area (e.g. AI, Climate, etc.)
-- Institution (e.g. Cornell, MIT, Harvard, etc.)`;
   const handleAddLabels = async () => {
     if (!verificationData) return;
-    alert(alert_message);
-    /*
+    
     try {
-      await addBlueskyLabels(
-        verificationData.blueskyHandle!,
-        verificationData.blueskyDid!,
-        {
-          orcidId: verificationData.orcidId,
-          numPublications: verificationData.numPublications,
-          // We'll need to add firstPubYear, lastPubYear, and lastInstitution later
-          // These can be extracted from the ORCID data
-        }
-      );
+      const response = await fetch('/api/labels', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          handle: verificationData.blueskyHandle,
+          did: verificationData.blueskyDid,
+          action: 'add',
+          labels: {
+            orcidId: verificationData.orcidId,
+            numPublications: verificationData.numPublications,
+            firstPubYear: verificationData.publicationYears ? 
+              Math.min(...verificationData.publicationYears) : undefined,
+            lastPubYear: verificationData.publicationYears ? 
+              Math.max(...verificationData.publicationYears) : undefined,
+            institutions: verificationData.institutions
+          }
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to add labels');
+      }
+
+      // Show success message
+      alert('Labels added successfully!');
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Failed to add labels');
     }
-    */
   };
 
   const handleRemoveLabels = async () => {
     if (!verificationData) return;
-    alert(alert_message);
-    /*
+    // alert(alert_message);
+    
     try {
-      await removeBlueskyLabels(
-        verificationData.blueskyHandle!,
-        verificationData.blueskyDid!,
-        verificationData.orcidId
-      );
+      const response = await fetch('/api/labels', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          handle: verificationData.blueskyHandle,
+          did: verificationData.blueskyDid,
+          action: 'delete',
+          labels: {
+            orcidId: verificationData.orcidId,
+            numPublications: verificationData.numPublications,
+            firstPubYear: verificationData.publicationYears ? 
+              Math.min(...verificationData.publicationYears) : undefined,
+            lastPubYear: verificationData.publicationYears ? 
+              Math.max(...verificationData.publicationYears) : undefined,
+            institutions: verificationData.institutions
+          }
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to remove labels');
+      }
+
+      // Show success message
+      alert('Labels removed successfully!');
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Failed to remove labels');
     }
-    */
+  };
+
+  const handleUpdateLabels = async () => {
+    if (!verificationData) return;
+    // alert(alert_message);
+    
+    try {
+      const response = await fetch('/api/labels', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          handle: verificationData.blueskyHandle,
+          did: verificationData.blueskyDid,
+          action: 'update',
+          labels: {
+            orcidId: verificationData.orcidId,
+            numPublications: verificationData.numPublications,
+            firstPubYear: verificationData.publicationYears ? 
+              Math.min(...verificationData.publicationYears) : undefined,
+            lastPubYear: verificationData.publicationYears ? 
+              Math.max(...verificationData.publicationYears) : undefined,
+            institutions: verificationData.institutions
+          }
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to update labels');
+      }
+
+      // Show success message
+      alert('Labels updated successfully!');
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Failed to update labels');
+    }
   };
 
   if (error) {
     return (
-      <div className="min-h-screen bg-gray-900 container-padding py-12">
-        <div className="content-container">
-          <div className="card">
-            <h2 className="text-xl font-semibold text-red-400 mb-4">Error</h2>
-            <p className="text-gray-300 mb-6">{error}</p>
-            <button
-              onClick={() => router.push('/')}
-              className="btn-primary"
-            >
-              Return to Home
-            </button>
+      <div className="min-vh-100 bg-light py-5">
+        <div className="container">
+          <div className="card shadow-sm">
+            <div className="card-body">
+              <h2 className="text-danger mb-4">Error</h2>
+              <p className="text-muted mb-4">{error}</p>
+              <button
+                onClick={() => router.push('/')}
+                className="btn btn-primary"
+              >
+                Return to Home
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -129,11 +258,13 @@ Labels that will be added will include:
 
   if (!verificationData) {
     return (
-      <div className="min-h-screen bg-gray-900 container-padding py-12">
-        <div className="content-container">
-          <div className="card">
-            <div className="flex items-center justify-center">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+      <div className="min-vh-100 bg-light py-5">
+        <div className="container">
+          <div className="card shadow-sm">
+            <div className="card-body text-center">
+              <div className="spinner-border text-primary" role="status">
+                <span className="visually-hidden">Loading...</span>
+              </div>
             </div>
           </div>
         </div>
@@ -142,146 +273,215 @@ Labels that will be added will include:
   }
 
   return (
-    <div className="min-h-screen bg-gray-900 container-padding py-12">
-      <div className="content-container">
-        <div className="card">
-          <h2 className="text-2xl font-bold text-white mb-6 text-center">Verification Complete! 🎉</h2>
-          <p className="text-gray-300 mb-8 text-center leading-relaxed">
-            Congratulations! Your Bluesky account has been successfully linked to your verified academic identity.
-            Click the button below to add verification labels to your Bluesky profile.
-          </p>
-          
-          <div className="space-y-6">
-            {/* ORCID Section */}
-            <div className="card-section">
-              <h3 className="font-medium text-gray-200 mb-3">Verified Academic Profile</h3>
-              <div className="bg-gray-800/50 p-4 rounded-lg ring-1 ring-gray-700 ring-inset">
-                <div className="space-y-2">
-                  <p className="text-gray-300">ORCID ID: <span className="text-blue-400 font-mono">{verificationData.orcidId}</span></p>
-                  <p className="text-gray-300">Name: <span className="text-blue-400">{verificationData.name}</span></p>
+    <div className="min-vh-100 bg-light py-5">
+      <div className="container">
+        <div className="card shadow-sm">
+          <div className="card-body">
+            <h2 className="text-center mb-4">Verification Complete! 🎉</h2>
+            <p className="text-center text-muted mb-5">
+              Congratulations! Your Bluesky account has been successfully linked to your verified academic identity.
+              Click the button below to add, delete, or refresh scientific verification labels on your Bluesky profile.
+            </p>
+            
+            <div className="row g-4">
+              {/* ORCID Section */}
+              <div className="col-12">
+                <div className="card h-100">
+                  <div className="card-body">
+                    <h3 className="h5 mb-3">Verified ORCID Profile</h3>
+                    <div className="bg-light p-4 rounded">
+                      <p className="mb-1">ID: <code className="text-primary">{verificationData.orcidId}</code></p>
+                      <p className="mb-0">Name: <span className="text-primary">{verificationData.name}</span></p>
+                    </div>
+                  </div>
                 </div>
+              </div>
 
-                {verificationData.institutions && verificationData.institutions.length > 0 && (
-                  <div className="mt-4">
-                    <h4 className="font-medium text-gray-200 mb-3">Institutions</h4>
-                    <p className="text-gray-300">
-                      {typeof verificationData.institutions === 'string' 
-                        ? verificationData.institutions 
-                        : verificationData.institutions.join(', ')}
+              {verificationData.institutions && verificationData.institutions.length > 0 && (
+                <div className="col-12">
+                  <div className="card h-100">
+                    <div className="card-body">
+                      <h3 className="h5 mb-3">Institutions</h3>
+                      <div className="bg-light p-4 rounded">
+                        <p className="text-muted mb-0">
+                          {typeof verificationData.institutions === 'string' 
+                            ? verificationData.institutions 
+                            : verificationData.institutions.join(', ')}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="col-12">
+                <div className="card h-100">
+                  <div className="card-body">
+                    <h3 className="h5 mb-3">Publications</h3>
+                    <div className="bg-light p-4 rounded">
+                      <p className="text-muted mb-3">{verificationData.numPublications} publications found</p>
+                      
+                      {verificationData.publicationYears && verificationData.publicationYears.length > 0 && (
+                        <div className="mt-3">
+                          <h5 className="h6 mb-2">Publication Years</h5>
+                          <p className="text-muted">
+                            - Earliest published work: {Math.min(...verificationData.publicationYears.filter(year => !isNaN(year)))}
+                            <br />
+                            - Latest published work: {Math.max(...verificationData.publicationYears.filter(year => !isNaN(year)))}
+                          </p>
+                        </div>
+                      )}
+
+                      {verificationData.publicationTypes && verificationData.publicationTypes.length > 0 && (
+                        <div className="mt-3">
+                          <h5 className="h6 mb-2">Publication Types</h5>
+                          <p className="text-muted">
+                            {Array.isArray(verificationData.publicationTypes) 
+                              ? verificationData.publicationTypes.join(', ')
+                              : String(verificationData.publicationTypes).replace(/[\[\]"]/g, '').split(',').map(type => type.trim().replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())).join(', ')}
+                          </p>
+                        </div>
+                      )}
+
+                      {verificationData.publicationTitles && verificationData.publicationTitles.length > 0 && (
+                        <div className="mt-3">
+                          <h5 className="h6 mb-2">Recent Publications</h5>
+                          <ul className="list-unstyled text-muted">
+                            {verificationData.publicationTitles.slice(0, 5).map((title, index) => (
+                              <li key={index} className="mb-2">
+                               - {title}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {verificationData.publicationJournals && verificationData.publicationJournals.length > 0 && (
+                        <div className="mt-3">
+                          <h5 className="h6 mb-2">Recent Publication Venues</h5>
+                          <ul className="list-unstyled text-muted">
+                            {verificationData.publicationJournals.slice(0, 5).map((journal, index) => (
+                              <li key={index} className="mb-2">
+                               - {journal}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Bluesky Section */}
+              <div className="col-12">
+                <div className="card h-100">
+                  <div className="card-body">
+                    <h3 className="h5 mb-3">Connected Bluesky Account</h3>
+                    <div className="bg-light p-4 rounded">
+                      <p className="mb-1">Handle: <code className="text-primary">{verificationData.blueskyHandle}</code></p>
+                      <p className="mb-0">DID: <code className="text-primary">{verificationData.blueskyDid}</code></p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Labels Preview Section */}
+              <div className="col-12">
+                <div className="card h-100">
+                  <div className="card-body">
+                    <h3 className="h5 mb-3">Labels To Be Added To Your Bluesky Profile</h3>
+                    <div className="bg-light p-4 rounded">
+                      <div className="d-flex flex-wrap gap-2">
+                        {/* Verified Scientist Label */}
+                        <span className="badge bg-primary">
+                          Verified Scientist 🔬
+                        </span>
+
+                        {/* Publication Count Label */}
+                        {verificationData.numPublications > 0 && (
+                          <span className="badge bg-info">
+                            {(() => {
+                              const count = verificationData.numPublications;
+                              if (count >= 250) return "250+ Publications 📚";
+                              if (count >= 100) return "100-249 Publications 📚";
+                              if (count >= 50) return "50-99 Publications 📚";
+                              if (count >= 10) return "10-49 Publications 📚";
+                              return "1-9 Publications 📚";
+                            })()}
+                          </span>
+                        )}
+
+                        {/* Publication Years Label */}
+                        {verificationData.publicationYears && verificationData.publicationYears.length > 0 && (
+                          <span className="badge bg-success">
+                            {(() => {
+                              const years = verificationData.publicationYears;
+                              const range = Math.max(...years) - Math.min(...years);
+                              if (range >= 20) return "20+ Years Publishing 📅";
+                              if (range >= 10) return "10-19 Years Publishing 📅";
+                              if (range >= 5) return "5-9 Years Publishing 📅";
+                              return "0-4 Years Publishing 📅";
+                            })()}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="col-12">
+                <div className="d-grid gap-4">
+                  <div>
+                    <button
+                      onClick={handleAddLabels}
+                      className="btn btn-primary w-100"
+                    >
+                      Add Labels to Bluesky
+                    </button>
+                    <p className="text-muted text-center mt-2 small">
+                      This will add verification labels to your Bluesky profile, making your academic credentials visible to others.
                     </p>
                   </div>
-                )}
 
-                <div className="mt-4">
-                  <h4 className="font-medium text-gray-200 mb-3">Publications</h4>
-                  <p className="text-gray-300">{verificationData.numPublications} publications found</p>
-                  
-                  {verificationData.publicationYears && verificationData.publicationYears.length > 0 && (
-                    <div className="mt-4">
-                      <h4 className="font-medium text-gray-200 mb-2">Publication Years</h4>
-                      <p className="text-gray-300">
-                        Earliest published work: {Math.min(...verificationData.publicationYears)}
-                        <br />
-                        Latest published work: {Math.max(...verificationData.publicationYears)}
-                      </p>
-                    </div>
-                  )}
-
-                  {verificationData.publicationTypes && verificationData.publicationTypes.length > 0 && (
-                    <div className="mt-4">
-                      <h4 className="font-medium text-gray-200 mb-2">Publication Types</h4>
-                      <p className="text-gray-300">
-                        {verificationData.publicationTypes.join(', ')}
-                      </p>
-                    </div>
-                  )}
-
-                  {verificationData.publicationTitles && verificationData.publicationTitles.length > 0 && (
-                    <div className="mt-4">
-                      <h4 className="font-medium text-gray-200 mb-2">Recent Publications</h4>
-                      <ul className="space-y-2">
-                        {verificationData.publicationTitles.slice(0, 5).map((title, index) => (
-                          <li key={index} className="text-gray-300">
-                            {title}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  {verificationData.publicationJournals && verificationData.publicationJournals.length > 0 && (
-                    <div className="mt-4">
-                      <h4 className="font-medium text-gray-200 mb-2">Recent Publication Venues</h4>
-                      <ul className="space-y-2">
-                        {verificationData.publicationJournals.slice(0, 5).map((journal, index) => (
-                          <li key={index} className="text-gray-300">
-                            {journal}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
+                  <div className="d-flex gap-3">
+                    <button
+                      onClick={handleUpdateLabels}
+                      className="btn btn-outline-primary flex-grow-1"
+                    >
+                      Refresh Labels
+                    </button>
+                    <button
+                      onClick={handleRemoveLabels}
+                      className="btn btn-outline-danger flex-grow-1"
+                    >
+                      Remove Labels
+                    </button>
+                  </div>
+                  <p className="text-muted text-center small">
+                    Use these buttons to update or remove your verification labels at any time.
+                  </p>
                 </div>
               </div>
-            </div>
 
-            {/* Bluesky Section */}
-            <div className="card-section">
-              <h3 className="font-medium text-gray-200 mb-3">Connected Bluesky Account</h3>
-              <div className="bg-gray-800/50 p-4 rounded-lg ring-1 ring-gray-700 ring-inset">
-                <div className="space-y-2">
-                  <p className="text-gray-300">Handle: <span className="text-blue-400 font-mono">{verificationData.blueskyHandle}</span></p>
-                  <p className="text-gray-300">DID: <span className="text-blue-400 font-mono">{verificationData.blueskyDid}</span></p>
+              {/* Return to Home Button */}
+              <div className="col-12">
+                <div className="d-grid">
+                  <button
+                    onClick={() => router.push('/')}
+                    className="btn btn-outline-secondary"
+                  >
+                    Return to Home
+                  </button>
                 </div>
               </div>
-            </div>
-
-            {/* Status Section */}
-            <div className="card-section">
-              <h3 className="font-medium text-gray-200 mb-3">Status</h3>
-              <div className="bg-gray-800/50 p-4 rounded-lg ring-1 ring-gray-700 ring-inset">
-                <div className="flex items-center">
-                  <div className="h-3 w-3 rounded-full bg-green-500 mr-2"></div>
-                  <p className="text-gray-300">Verified</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Action Buttons */}
-            <div className="space-y-6">
-              <div>
-                <button
-                  onClick={handleAddLabels}
-                  className="btn-primary"
-                >
-                  Add Labels to Bluesky
-                </button>
-                <p className="text-gray-400 text-sm text-center mt-2">
-                  This will add verification labels to your Bluesky profile, making your academic credentials visible to others.
-                </p>
-              </div>
-
-              <div className="flex gap-4">
-                <button
-                  onClick={handleAddLabels}
-                  className="btn-secondary"
-                >
-                  Refresh Labels
-                </button>
-                <button
-                  onClick={handleRemoveLabels}
-                  className="btn-danger"
-                >
-                  Remove Labels
-                </button>
-              </div>
-              <p className="text-gray-400 text-sm text-center">
-                Use these buttons to update or remove your verification labels at any time.
-              </p>
             </div>
           </div>
         </div>
       </div>
+      <Footer />
     </div>
   );
 } 

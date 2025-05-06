@@ -2,6 +2,11 @@ src/verifier/infrastructure/cdk.out
 */node_modules
 node_modules/
 
+backend/src/lambda/python/*
+!backend/src/lambda/python/label_handler.py
+
+backend/src/lambda/*.zip
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

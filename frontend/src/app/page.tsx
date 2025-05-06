@@ -1,17 +1,24 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import Footer from '@/components/Footer';
 
 interface OrcidData {
   id: string;
   name: string;
   institutions: string[];
   numPublications: number;
+  publicationYears?: number[];
+  publicationTypes?: string[];
+  publicationTitles?: string[];
+  publicationJournals?: string[];
 }
 
 export default function Home() {
   const [orcidData, setOrcidData] = useState<OrcidData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const router = useRouter();
 
   // Check for URL parameters on initial load
   useEffect(() => {
@@ -23,12 +30,42 @@ export default function Home() {
       const institutionsParam = searchParams.get('institutions');
       const institutions = institutionsParam ? JSON.parse(institutionsParam) : [];
       
+      // Parse publication data
+      const publicationYearsParam = searchParams.get('publicationYears');
+      const publicationTypesParam = searchParams.get('publicationTypes');
+      const publicationTitlesParam = searchParams.get('publicationTitles');
+      const publicationJournalsParam = searchParams.get('publicationJournals');
+
+      const publicationYears = publicationYearsParam ? JSON.parse(publicationYearsParam) : [];
+      const publicationTypes = publicationTypesParam ? JSON.parse(publicationTypesParam) : [];
+      const publicationTitles = publicationTitlesParam ? JSON.parse(publicationTitlesParam) : [];
+      const publicationJournals = publicationJournalsParam ? JSON.parse(publicationJournalsParam) : [];
+      
       setOrcidData({
         id: orcidId,
         name: searchParams.get('name') || '',
         institutions: Array.isArray(institutions) ? institutions : [],
-        numPublications: parseInt(searchParams.get('numPublications') || '0')
+        numPublications: parseInt(searchParams.get('numPublications') || '0'),
+        publicationYears,
+        publicationTypes,
+        publicationTitles,
+        publicationJournals
       });
+
+      // If we have ORCID data, redirect to verify page with all parameters
+      const verifyParams = new URLSearchParams({
+        orcidId,
+        name: searchParams.get('name') || '',
+        institutions: JSON.stringify(institutions),
+        numPublications: searchParams.get('numPublications') || '0',
+        status: 'pending_bluesky',
+        publicationYears: JSON.stringify(publicationYears),
+        publicationTypes: JSON.stringify(publicationTypes),
+        publicationTitles: JSON.stringify(publicationTitles),
+        publicationJournals: JSON.stringify(publicationJournals)
+      });
+
+      router.push(`/verify?${verifyParams.toString()}`);
     }
 
     // Check for error
@@ -36,7 +73,7 @@ export default function Home() {
     if (errorMessage) {
       setError(errorMessage);
     }
-  }, []);
+  }, [router]);
 
   const handleOrcidAuth = async () => {
     try {
@@ -71,79 +108,87 @@ export default function Home() {
   };
 
   return (
-    <main className="min-h-screen bg-gray-900 container-padding py-12">
-      <div className="content-container">
-        <h1 className="text-4xl font-bold mb-12 text-center text-white">
-          Atproto Scientific Verifier
-        </h1>
-        
-        <div className="card mb-8">
-          <h2 className="text-2xl font-semibold mb-6 text-white text-center">About This Tool</h2>
-          <p className="text-gray-300 mb-6 leading-relaxed text-center">
-            This tool helps verify your scientific credentials on Bluesky. The process involves two main steps:
-          </p>
-          <ol className="space-y-4 text-gray-300">
-            <li className="card-section">
-              <span className="font-medium text-blue-400">ORCID Verification: </span>
-              <span className="ml-2">Connect your ORCID account to verify your academic identity, publications, and affiliations.</span>
-            </li>
-            <li className="card-section">
-              <span className="font-medium text-blue-400">Bluesky Connection: </span>
-              <span className="ml-2">Link your verified academic identity to your Bluesky account.</span>
-            </li>
-          </ol>
-          <p className="text-gray-300 mt-6 leading-relaxed text-center">
-            Once verified, your Bluesky profile will be marked as belonging to a verified academic, 
-            helping others identify credible scientific voices on the platform.
-          </p>
-        </div>
-        
-        {error && (
-          <div className="mb-8 p-6 bg-red-900/50 border border-red-700 rounded-xl text-red-300 text-center">
-            {error}
-          </div>
-        )}
+    <div className="min-vh-100 bg-light py-5">
+      <div className="container">
+        <div className="row justify-content-center">
+          <div className="col-md-8 col-lg-6">
+            <div className="card shadow-sm mb-4">
+              <div className="card-body">
+                <h1 className="text-center mb-4">Bluesky Scientific Verifier</h1>
+                <p className="text-center text-muted mb-4">
+                  This tool helps import your scientific credentials into Bluesky from trusted, verified third-party sources. The process involves two main steps:
+                </p>
+                <ol className="list-group list-group-numbered mb-4">
+                  <li className="list-group-item">
+                    <span className="fw-bold text-primary">ORCID Verification: </span>
+                    Connect your ORCID account to verify your academic identity, publications, and affiliations.
+                  </li>
+                  <li className="list-group-item">
+                    <span className="fw-bold text-primary">Bluesky Connection: </span>
+                    Link your verified academic identity to your Bluesky account.
+                  </li>
+                </ol>
+                <p className="text-center text-muted">
+                  Once verified, your Bluesky profile will be marked as belonging to a verified academic, 
+                  helping others identify credible scientific voices on the platform.
+                </p>
+              </div>
+            </div>
 
-        <div className="card">
-          <h2 className="text-2xl font-semibold mb-6 text-white text-center">Step 1: Connect ORCID</h2>
-          <p className="text-gray-300 mb-8 leading-relaxed text-center">
-            Start by connecting your ORCID account. This will verify your academic identity, 
-            including your publications and institutional affiliations.
-          </p>
-          
-            {orcidData ? (
-            <div className="space-y-6">
-              <div className="card-section">
-                <p className="text-gray-300">ID: <span className="text-blue-400 font-mono">{orcidData.id}</span></p>
-                <p className="text-gray-300">Name: <span className="text-blue-400">{orcidData.name}</span></p>
+            {error && (
+              <div className="alert alert-danger mb-4" role="alert">
+                {error}
               </div>
-              
-              {orcidData.institutions.length > 0 && (
-                <div className="card-section">
-                  <h3 className="font-medium text-gray-200 mb-3">Institutions:</h3>
-                  <p className="text-gray-300">
-                    {Array.isArray(orcidData.institutions) 
-                      ? orcidData.institutions.join(', ')
-                      : orcidData.institutions}
-                  </p>
-                </div>
-              )}
-              
-              <div className="card-section">
-                <p className="text-gray-300">Publications: <span className="text-blue-400">{orcidData.numPublications}</span></p>
-              </div>
-              
-              <p className="text-gray-300 text-center mt-6">
-                ✓ ORCID verification complete. Proceed to connect your Bluesky account.
-              </p>
-              </div>
-            ) : (
-            <button onClick={handleOrcidAuth} className="btn-primary">
-              Connect ORCID
-              </button>
             )}
+
+            <div className="card shadow-sm">
+              <div className="card-body">
+                <h2 className="text-center h4 mb-4">Step 1: Connect ORCID</h2>
+                <p className="text-center text-muted mb-4">
+                  Start by connecting your ORCID account. This will verify your academic identity, 
+                  including your publications and institutional affiliations.
+                </p>
+                
+                {orcidData ? (
+                  <div className="bg-light p-4 rounded">
+                    <div className="mb-3">
+                      <p className="mb-1">ID: <code className="text-primary">{orcidData.id}</code></p>
+                      <p className="mb-0">Name: <span className="text-primary">{orcidData.name}</span></p>
+                    </div>
+                    
+                    {orcidData.institutions.length > 0 && (
+                      <div className="mb-3">
+                        <h3 className="h6 mb-2">Institutions:</h3>
+                        <p className="text-muted mb-0">
+                          {Array.isArray(orcidData.institutions) 
+                            ? orcidData.institutions.join(', ')
+                            : orcidData.institutions}
+                        </p>
+                      </div>
+                    )}
+                    
+                    <div className="mb-3">
+                      <p className="text-muted mb-0">Publications: <span className="text-primary">{orcidData.numPublications}</span></p>
+                    </div>
+                    
+                    <p className="text-success text-center mb-0">
+                      ✓ ORCID verification complete. Proceed to connect your Bluesky account.
+                    </p>
+                  </div>
+                ) : (
+                  <button 
+                    onClick={handleOrcidAuth} 
+                    className="btn btn-primary w-100"
+                  >
+                    Connect ORCID
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       </div>
-    </main>
+      <Footer />
+    </div>
   );
 }

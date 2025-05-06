@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export async function POST(request: NextRequest) {
   try {
-    const { action, handle, did, data, orcidId } = await request.json();
+    const { action, handle, did, labels, orcidId } = await request.json();
+    console.log(action, handle, did, labels, orcidId);
 
     if (!action || !handle || !did) {
       return NextResponse.json(
@@ -11,9 +12,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (action === 'remove' && !orcidId) {
+    if ((action === 'delete' || action === 'update') && !orcidId) {
       return NextResponse.json(
-        { error: 'ORCID ID is required for removing labels' },
+        { error: 'ORCID ID is required for removing or updating labels' },
         { status: 400 }
       );
     }
@@ -23,6 +24,17 @@ export async function POST(request: NextRequest) {
       throw new Error('API URL not configured');
     }
 
+    console.log({
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'Origin': process.env.NEXT_PUBLIC_FRONTEND_URL || 'https://bsky-scientific-verifier.vercel.app',
+        'Authorization': `Bearer ${process.env.API_TOKEN}`
+      },
+      body: JSON.stringify({action, handle, did, labels, orcidId })
+    })
+
     const response = await fetch(`${apiUrl}/labels`, {
       method: 'POST',
       headers: {
@@ -31,7 +43,7 @@ export async function POST(request: NextRequest) {
         'Origin': process.env.NEXT_PUBLIC_FRONTEND_URL || 'https://bsky-scientific-verifier.vercel.app',
         'Authorization': `Bearer ${process.env.API_TOKEN}`
       },
-      body: JSON.stringify({ action, handle, did, data, orcidId })
+      body: JSON.stringify({action, handle, did, labels, orcidId })
     });
 
     if (!response.ok) {

@@ -1,0 +1,7 @@
+# atproto==0.0.61
+urllib3
+requests
+libipld
+pydantic
+pydantic-core
+typing-extensions

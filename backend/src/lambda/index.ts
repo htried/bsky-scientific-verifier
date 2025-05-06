@@ -2,6 +2,7 @@ import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, PutCommand, GetCommand, DeleteCommand, PutCommandInput, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
+import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda';
 import { NodeOAuthClient, NodeSavedState, NodeSavedSession, OAuthSession } from '@atproto/oauth-client-node';
 import { JoseKey } from '@atproto/jwk-jose';
 import {
@@ -13,7 +14,9 @@ import {
   fetchPubmedMetadata,
   storeVerificationData
 } from './orcid-utils';
-// import { addLabels, removeLabels } from './labels';
+// import { getBot, getLabeler } from './module-loader';
+// import { getBot } from './module-loader';
+// import { getBot } from './module-loader.js';
 
 const client = new DynamoDBClient({});
 const docClient = DynamoDBDocumentClient.from(client, {
@@ -34,6 +37,10 @@ const ORCID_PROVIDER = process.env.ORCID_PROVIDER || 'orcid';
 
 // Initialize OAuth client
 let oauthClient: NodeOAuthClient;
+
+// Initialize bot and labeler
+// let bot: Bot;
+// let labeler: LabelerServer;
 
 // Add this helper function at the top of the file
 const getCorsHeaders = (origin: string | undefined) => ({
@@ -226,6 +233,97 @@ interface VerificationData {
   refreshJwt?: string;
 }
 
+interface LabelRequest {
+  handle: string;
+  did: string;
+  action: 'add' | 'update' | 'delete';
+  labels: {
+    orcidId: string;
+    numPublications: number;
+    firstPubYear?: number;
+    lastPubYear?: number;
+    institutions?: string[];
+  };
+}
+
+// async function handleLabels(request: LabelRequest): Promise<void> {
+  // const bot = await getBot();
+  // const labeler = await getLabeler();
+
+  // try {
+  //   const profile = await bot.getProfile(request.did);
+    
+  //   if (!profile) {
+  //     throw new Error('Profile not found');
+  //   }
+
+  //   const labels = [];
+    
+  //   // Add verified scientist label
+  //   labels.push('verified-scientist');
+
+  //   // Add publication count label
+  //   const pubCountLabel = getPubCountLabel(request.labels.numPublications);
+  //   if (pubCountLabel) {
+  //     labels.push(pubCountLabel);
+  //   }
+
+  //   // Add publication year range label if available
+  //   if (request.labels.firstPubYear && request.labels.lastPubYear) {
+  //     const yearRangeLabel = getYearRangeLabel(
+  //       request.labels.firstPubYear,
+  //       request.labels.lastPubYear
+  //     );
+  //     if (yearRangeLabel) {
+  //       labels.push(yearRangeLabel);
+  //     }
+  //   }
+
+    // // Add institution labels if available
+    // if (request.labels.institutions) {
+    //   for (const institution of request.labels.institutions) {
+    //     labels.push({
+    //       val: `institution-${institution.toLowerCase().replace(/\s+/g, '-')}`,
+    //       src: process.env.LABELER_DID!,
+    //       uri: `at://${request.did}/app.bsky.actor.profile/self`,
+    //       neg: request.action === 'delete',
+    //     });
+    //   }
+    // }
+
+//     // If action is delete, negate all labels
+//     // If action is add, apply new labels
+//     // If action is update, do both
+//     if (request.action === 'delete' || request.action === 'update') {
+//       const allLabels = ['verified-scientist', 'publications-gte-twofifty', 'publications-onehundred-twofifty', 'publications-fifty-ninetynine', 'publications-ten-fortynine', 'publications-one-nine', 'publication-years-gte-twenty', 'publication-years-ten-nineteen', 'publication-years-five-nine', 'publication-years-zero-four'];
+//       await profile.negateAccountLabels(allLabels);
+//     }
+//     if (request.action === 'add' || request.action === 'update') {
+//       await profile.labelAccount(labels);
+//     }
+//   } catch (error) {
+//     console.error('Error handling labels:', error);
+//     throw error;
+//   }
+// }
+
+// // Helper functions for label generation
+// function getPubCountLabel(count: number): string {
+//   if (count >= 250) return 'publications-gte-twofifty';
+//   if (count >= 100) return 'publications-onehundred-twofifty';
+//   if (count >= 50) return 'publications-fifty-ninetynine';
+//   if (count >= 10) return 'publications-ten-fortynine';
+//   return 'publications-one-nine';
+// }
+
+// function getYearRangeLabel(firstYear: number, lastYear: number): string {
+//   const range = lastYear - firstYear;
+//   if (range >= 20) return 'publication-years-gte-twenty';
+//   if (range >= 10) return 'publication-years-ten-nineteen';
+//   if (range >= 5) return 'publication-years-five-nine';
+//   return 'publication-years-zero-four';
+// }
+
 export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
   // Handle OPTIONS request for CORS preflight
   if (event.httpMethod === 'OPTIONS') {
@@ -400,6 +498,7 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
             TableName: process.env.OAUTH_STATE_TABLE,
             Item: {
               key: state,
+              appState: state,
               orcidId: queryStringParameters?.orcidId,
               handle: queryStringParameters?.handle,
               timestamp,
@@ -606,7 +705,166 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
         }
 
         if (provider === 'https://orcid.org') {
-          // ... existing code ...
+          const code = queryStringParameters?.code;
+          if (!code) {
+            return {
+              statusCode: 400,
+              headers: getCorsHeaders(event.headers.origin),
+              body: JSON.stringify({ error: 'Missing code parameter' })
+            };
+          }
+
+          try {
+            // Verify OAuth client is properly initialized
+            if (!oauthClient) {
+              await initializeOAuthClient();
+            }
+
+            if (!oauthClient.keyset) {
+              throw new Error('OAuth client keyset not initialized');
+            }
+
+            // Get the state from DynamoDB
+            const stateResult = await docClient.send(new GetCommand({
+              TableName: process.env.OAUTH_STATE_TABLE,
+              Key: { key: queryStringParameters?.state }
+            }));
+
+            if (!stateResult.Item?.appState) {
+              throw new Error('No appState found for state');
+            }
+
+            // Process the callback
+            const callbackResult = await oauthClient.callback(new URLSearchParams({ 
+              code,
+              state: queryStringParameters?.state || '',
+              iss: queryStringParameters?.iss || 'https://orcid.org'
+            }));
+
+            if (!callbackResult || !callbackResult.session) {
+              throw new Error('Failed to create session');
+            }
+
+            // Extract session data
+            const oauthSession = callbackResult.session as ExtendedOAuthSession;
+            const orcidId = oauthSession.sub;
+            
+            if (!orcidId) {
+              throw new Error('Missing ORCID ID in session');
+            }
+
+            // Get the token set
+            const tokenSet = await oauthSession.getTokenSet();
+
+            // Fetch ORCID profile data
+            const profileResponse = await fetch('https://pub.orcid.org/v3.0/' + orcidId, {
+              headers: {
+                'Accept': 'application/json',
+                'Authorization': `Bearer ${tokenSet.access_token}`
+              }
+            });
+
+            if (!profileResponse.ok) {
+              throw new Error('Failed to fetch ORCID profile');
+            }
+
+            const profileData = await profileResponse.json();
+            
+            // Extract name
+            const name = profileData.person?.name?.['given-names']?.value + ' ' + 
+                        profileData.person?.name?.['family-name']?.value;
+
+            // Extract institutions
+            const institutions = profileData.activities?.affiliations?.['affiliation-group']?.map(
+              (group: any) => group.affiliations?.[0]?.affiliation?.['organization']?.name
+            ).filter(Boolean) || [];
+
+            // Extract publications
+            const works = profileData.activities?.works?.['work-group'] || [];
+            const publications = works.map((work: any) => {
+              const workData = work.work?.[0];
+              return {
+                title: workData?.title?.['title']?.value,
+                type: workData?.type,
+                year: workData?.['publication-date']?.['year']?.value,
+                journal: workData?.['journal-title']?.value
+              };
+            }).filter(Boolean);
+
+            // Process publication data
+            const publicationYears = publications
+              .map((p: { year?: number }) => p.year)
+              .filter(Boolean)
+              .map(Number);
+            
+            const publicationTypes = [...new Set(publications
+              .map((p: { type?: string }) => p.type)
+              .filter(Boolean))];
+            
+            const publicationTitles = publications
+              .map((p: { title?: string }) => p.title)
+              .filter(Boolean);
+            
+            const publicationJournals = [...new Set(publications
+              .map((p: { journal?: string }) => p.journal)
+              .filter(Boolean))];
+
+            // Store verification data in DynamoDB
+            const verificationData = {
+              orcidId,
+              name,
+              institutions,
+              numPublications: publications.length,
+              publicationYears,
+              publicationTypes,
+              publicationTitles,
+              publicationJournals,
+              status: 'pending_bluesky',
+              verifiedAt: new Date().toISOString(),
+              session: {
+                accessJwt: tokenSet.access_token,
+                refreshJwt: tokenSet.refresh_token,
+                handle: oauthSession.handle,
+                did: oauthSession.sub,
+                service: oauthSession.service
+              }
+            };
+
+            await docClient.send(new PutCommand({
+              TableName: process.env.VERIFICATION_TABLE,
+              Item: verificationData
+            }));
+
+            // Return success response with ORCID data
+            return {
+              statusCode: 200,
+              headers: {
+                'Content-Type': 'application/json',
+                ...getCorsHeaders(event.headers.origin)
+              },
+              body: JSON.stringify({ 
+                success: true,
+                orcidId,
+                name,
+                institutions,
+                numPublications: publications.length,
+                publicationYears,
+                publicationTypes,
+                publicationTitles,
+                publicationJournals,
+                handle: oauthSession.handle,
+                did: oauthSession.sub,
+                status: 'verified'
+              })
+            };
+          } catch (error) {
+            console.error('Error in ORCID callback:', error);
+            return {
+              statusCode: 500,
+              headers: getCorsHeaders(event.headers.origin),
+              body: JSON.stringify({ error: 'Failed to process ORCID callback' })
+            };
+          }
         } else if (provider === 'https://bsky.social') {
           const code = queryStringParameters?.code;
           if (!code) {
@@ -648,12 +906,12 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
             const extractedHandle = stateParts[2];
             const orcidData = {
               name: stateParts[3] || '',
-              institutions: stateParts[4] ? JSON.parse(stateParts[4]) : [],
+              institutions: stateParts[4] ? JSON.parse(decodeURIComponent(stateParts[4])) : [],
               numPublications: parseInt(stateParts[5] || '0'),
-              publicationYears: stateParts[6] ? JSON.parse(stateParts[6]) : [],
-              publicationTypes: stateParts[7] ? JSON.parse(stateParts[7]) : [],
-              publicationTitles: stateParts[8] ? JSON.parse(stateParts[8]) : [],
-              publicationJournals: stateParts[9] ? JSON.parse(stateParts[9]) : []
+              publicationYears: stateParts[6] ? JSON.parse(decodeURIComponent(stateParts[6])) : [],
+              publicationTypes: stateParts[7] ? JSON.parse(decodeURIComponent(stateParts[7])) : [],
+              publicationTitles: stateParts[8] ? JSON.parse(decodeURIComponent(stateParts[8])) : [],
+              publicationJournals: stateParts[9] ? JSON.parse(decodeURIComponent(stateParts[9])) : []
             };
             
             if (!extractedOrcidId || !extractedHandle) {
@@ -720,6 +978,10 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
               name: orcidData.name,
               institutions: orcidData.institutions,
               numPublications: orcidData.numPublications,
+              publicationYears: orcidData.publicationYears,
+              publicationTypes: orcidData.publicationTypes,
+              publicationTitles: orcidData.publicationTitles,
+              publicationJournals: orcidData.publicationJournals,
               status: 'verified',
               verifiedAt: new Date().toISOString(),
               session: {
@@ -754,7 +1016,8 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
                 publicationTitles: orcidData.publicationTitles,
                 publicationJournals: orcidData.publicationJournals,
                 handle: extractedHandle,
-                did
+                did,
+                status: 'verified'
               })
             };
           } catch (error) {
@@ -785,89 +1048,36 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
           body: JSON.stringify({ error: 'Invalid provider' })
         };
       }
-    // } else if (path === '/labels') {
-    //   try {
-    //     // Check for authorization token
-    //     const authHeader = event.headers.Authorization || event.headers.authorization;
-    //     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    //       console.error('Missing or invalid authorization header:', authHeader);
-    //       return {
-    //         statusCode: 401,
-    //         headers: getCorsHeaders(event.headers.origin),
-    //         body: JSON.stringify({ error: 'Missing or invalid authorization token' })
-    //       };
-    //     }
+    } else if (path === '/labels') {
+      if (!event.body) {
+        return {
+          statusCode: 400,
+          headers: getCorsHeaders(event.headers.origin),
+          body: JSON.stringify({ error: 'Missing request body' })
+        };
+      }
 
-    //     const token = authHeader.split(' ')[1];
-    //     if (token !== process.env.API_TOKEN) {
-    //       console.error('Invalid token provided:', token);
-    //       return {
-    //         statusCode: 401,
-    //         headers: getCorsHeaders(event.headers.origin),
-    //         body: JSON.stringify({ error: 'Invalid authorization token' })
-    //       };
-    //     }
+      // Forward the request to the Python Lambda function
+      const lambda = new LambdaClient({});
+      const response = await lambda.send(new InvokeCommand({
+        FunctionName: process.env.LABEL_LAMBDA_FUNCTION_NAME || 'bsky-scientific-verifier-label-handler',
+        Payload: Buffer.from(event.body)
+      }));
 
-    //     const { action, handle, did, data, orcidId } = JSON.parse(event.body || '{}');
-    //     console.log('Received label request:', { action, handle, did, data, orcidId });
+      if (!response.Payload) {
+        throw new Error('No response from label Lambda function');
+      }
 
-    //     if (!action || !handle || !did) {
-    //       console.error('Missing required parameters:', { action, handle, did });
-    //       return {
-    //         statusCode: 400,
-    //         headers: getCorsHeaders(event.headers.origin),
-    //         body: JSON.stringify({ error: 'Missing required parameters' })
-    //       };
-    //     }
-
-    //     if (action === 'add') {
-    //       console.log('Adding labels with data:', data);
-    //       await addLabels(handle, did, data);
-    //       return {
-    //         statusCode: 200,
-    //         headers: getCorsHeaders(event.headers.origin),
-    //         body: JSON.stringify({ success: true })
-    //       };
-    //     } else if (action === 'remove') {
-    //       if (!orcidId) {
-    //         console.error('Missing ORCID ID for remove action');
-    //         return {
-    //           statusCode: 400,
-    //           headers: getCorsHeaders(event.headers.origin),
-    //           body: JSON.stringify({ error: 'ORCID ID is required for removing labels' })
-    //         };
-    //       }
-    //       console.log('Removing labels for ORCID:', orcidId);
-    //       await removeLabels(handle, did, orcidId);
-    //       return {
-    //         statusCode: 200,
-    //         headers: getCorsHeaders(event.headers.origin),
-    //         body: JSON.stringify({ success: true })
-    //       };
-    //     } else {
-    //       console.error('Invalid action:', action);
-    //       return {
-    //         statusCode: 400,
-    //         headers: getCorsHeaders(event.headers.origin),
-    //         body: JSON.stringify({ error: 'Invalid action' })
-    //       };
-    //     }
-    //   } catch (error) {
-    //     console.error('Error handling labels:', error);
-    //     console.error('Error details:', {
-    //       message: error instanceof Error ? error.message : 'Unknown error',
-    //       stack: error instanceof Error ? error.stack : undefined,
-    //       event: {
-    //         headers: event.headers,
-    //         body: event.body
-    //       }
-    //     });
-    //     return {
-    //       statusCode: 500,
-    //       headers: getCorsHeaders(event.headers.origin),
-    //       body: JSON.stringify({ error: 'Failed to handle labels' })
-    //     };
-    //   }
+      const result = JSON.parse(Buffer.from(response.Payload).toString());
+      
+      return {
+        statusCode: result.statusCode || 200,
+        headers: {
+          ...getCorsHeaders(event.headers.origin),
+          'Content-Type': 'application/json'
+        },
+        body: result.body
+      };
     } else {
       console.error('Invalid path:', path);
       return {
