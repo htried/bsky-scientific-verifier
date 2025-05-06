@@ -10,7 +10,7 @@ A Bluesky user who wants to get labels on their account indicating their scienti
 5. Finally, the user sees a page when they can add verified labels to their account (there are also options to refresh old labels or delete labels that they no longer want to display).
 
 A Bluesky user who wants to see those labels:
-1. Navigates to https://bsky.app/profile/ruff-specialist.bsky.social
+1. Navigates to bsky-sci-verify.bsky.social
 2. Hits the "Subscribe to Labeler" button
 
 At present, the actual label emitting and subscription functionality (from @skyware/labeler) have not yet been implemented (since we haven't had a test labeler). They'll be coming soon.
